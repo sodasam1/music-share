@@ -1,0 +1,17 @@
+# music-share's settings for the shared installer (deploy/appkit.sh). Reference: kit/appkit/README.md in personal-site.
+NAME=music-share
+UNIXNAME=musicshare
+TITLE="Music share"
+BASE_PATH=/music
+PORT=8101
+PKGS="py3-flask py3-waitress ffmpeg"
+SVC_HOME=/var/music-share
+SRC_MARKER="app/wsgi.py static/studio.html"
+HEALTH_PATH=/music/health
+SITE_AUTH=1
+DIRS="/var/music-share,@svc,@svc,750 /var/music-share-backup,@svc,@svc,755 /var/music-share-restore,@login,@login,755"
+CONF_LINES="MUSICSHARE_DATA_DIR=/var/music-share
+MUSICSHARE_BASE_PATH=/music
+MUSICSHARE_STATIC_DIR=/usr/local/music-share/static
+MUSICSHARE_BACKUP_DIR=/var/music-share-backup
+MUSICSHARE_RESTORE_DIR=/var/music-share-restore"

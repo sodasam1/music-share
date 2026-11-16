@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ p.title }}{% endblock %}
+{% block body %}
+<header class="site"><h1>{{ p.title }}</h1></header>
+{% if p.notes %}<p class="muted notes">{{ p.notes }}</p>{% endif %}
+<div data-playlist="1">
+{% for t in items %}{% with link=False, download=True %}{% include "_item.html" %}{% endwith %}{% else %}<p class="muted">This playlist is empty.</p>{% endfor %}
+</div>
+{% endblock %}

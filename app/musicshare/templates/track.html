@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}{{ t.title }}{% endblock %}
+{% block body %}
+{% with link=False, download=True %}{% include "_item.html" %}{% endwith %}
+{% endblock %}

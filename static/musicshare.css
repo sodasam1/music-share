@@ -1,0 +1,21 @@
+/* music-share's own few rules, on top of minimal.css */
+.item { margin: 0 0 1.4rem; }
+.item .row { border-bottom: 0; padding-bottom: .3rem; }
+.item.playing .title { box-shadow: inset 0 -2px 0 var(--accent); }
+.small { font-size: .85rem; }
+.notes { white-space: pre-wrap; margin: .3rem 0; overflow-wrap: anywhere; }
+.time { font-variant-numeric: tabular-nums; }
+.studio .row .grow { min-width: 0; }
+.studio .actions { display: flex; gap: 10px; flex-wrap: wrap; margin: .2rem 0 .6rem; }
+.studio .actions button { min-height: 30px; padding: .2rem .6rem; }
+.studio .drop { border: 2px dashed var(--line); border-radius: var(--r); padding: 1.2rem; text-align: center; color: var(--muted); margin: 1rem 0; }
+.studio .drop.over { border-color: var(--accent); color: var(--text); }
+.studio nav.tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); margin-bottom: 1rem; }
+.studio nav.tabs button { border: 0; border-radius: 0; padding: .4rem 0; color: var(--muted); }
+.studio nav.tabs button[aria-pressed="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.studio .edit { display: grid; gap: .4rem; margin: .5rem 0; }
+.studio .pl-items { list-style: none; margin: .4rem 0; padding: 0; }
+.studio .pl-items li { display: flex; gap: 8px; align-items: center; padding: .2rem 0; border-bottom: 1px solid var(--line); }
+.studio .pl-items li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio select { width: auto; max-width: 100%; border: 1px solid var(--line); padding: .3rem; background: var(--bg); color: var(--text); }
+.pill-note { color: var(--warn); }

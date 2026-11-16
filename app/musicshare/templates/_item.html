@@ -1,0 +1,13 @@
+<article class="item" data-audio="{{ t.audio }}">
+  <div class="row">
+    <button class="play" type="button" aria-label="Play {{ t.title }}">&#9654;</button>
+    <div class="grow">
+      {% if link %}<a class="title" href="{{ t.page }}">{{ t.title }}</a>{% else %}<span class="title">{{ t.title }}</span>{% endif %}
+      <div class="muted small">{{ t.created }}</div>
+    </div>
+    <span class="muted time" aria-live="off"></span>
+  </div>
+  <canvas class="wave" data-peaks="{{ t.peaks }}" data-duration="{{ t.duration }}"></canvas>
+  {% if t.notes %}<p class="muted notes">{{ t.notes }}</p>{% endif %}
+  {% if download and t.download %}<p class="small"><a href="{{ t.download }}">Download</a></p>{% endif %}
+</article>

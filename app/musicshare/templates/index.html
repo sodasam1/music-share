@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Music{% endblock %}
+{% block body %}
+<header class="site"><h1>Music</h1></header>
+{% if playlists %}
+<h2>Playlists</h2>
+{% for p in playlists %}<div class="row"><div class="grow"><a class="title" href="{{ p.page }}">{{ p.title }}</a>{% if p.notes %}<div class="muted notes">{{ p.notes }}</div>{% endif %}</div></div>{% endfor %}
+{% endif %}
+<h2>Tracks</h2>
+{% for t in tracks %}{% with link=True, download=False %}{% include "_item.html" %}{% endwith %}{% else %}<p class="muted">Nothing is listed here yet.</p>{% endfor %}
+{% endblock %}

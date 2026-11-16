@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% if noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
+<title>{% block title %}Music{% endblock %}</title>
+<link rel="stylesheet" href="{{ base }}/static/minimal/minimal.css">
+<link rel="stylesheet" href="{{ base }}/static/musicshare.css">
+<script src="{{ base }}/static/minimal/theme.js"></script>
+<script src="{{ base }}/static/wave/wave.js" defer></script>
+<script src="{{ base }}/static/public.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+{% block body %}{% endblock %}
+</div>
+</body>
+</html>
