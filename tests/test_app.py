@@ -1,5 +1,7 @@
 import io
+from pathlib import Path
 import json
+import os
 import re
 import shutil
 
@@ -307,3 +309,12 @@ def test_backup_without_a_folder_is_refused_politely(tmp_path, site):
                       "MUSICSHARE_INSECURE_COOKIES": "1", "clock": Wall()})
     o = app.test_client(); o.set_cookie("site_musicshare", owner_cookie(site))
     assert o.post("/music/api/backup").status_code == 409 and o.get("/music/api/backup").json["enabled"] is False
+
+
+def test_big_uploads_are_parked_on_the_data_volume_not_the_boot_disks_tmp(owner, tmp_path):
+    import tempfile
+    assert Path(tempfile.gettempdir()) == tmp_path / "data" / "tmp"             # Werkzeug's spill-over file for a large upload goes here
+    big = wav_bytes(seconds=40.0, rate=16000)                                   # about 1.2 MB: above the 500 KB where Werkzeug leaves memory
+    assert len(big) > 1_000_000
+    assert upload(owner, data=big).status_code in (200, 201)                    # a large upload still works with the spill-over folder moved
+    assert not list((tmp_path / "data" / "tmp").glob("*.part"))                 # and the upload left no half-written file behind
