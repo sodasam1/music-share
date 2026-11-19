@@ -12,12 +12,12 @@ A="sh $W/up/deploy/install.sh"
 # the data volume: the installer refuses unless it is mounted (marker file) -- first prove it refuses, then "mount" it
 $A --yes > "$R/o0" 2>&1 && bad "installer ran without the volume" || { grep -q 'must be mounted' "$R/o0" && [ ! -e "$R/etc/musicshare.conf" ] && ok "refuses to run when the volume is not mounted, and creates nothing" || bad "mount guard"; }
 mkdir -p "$R/mnt/data"; touch "$R/mnt/data/.volume-ok"
-$A --check > "$R/c" 2>&1; [ ! -e "$R/etc/musicshare.conf" ] && [ ! -d "$R/mnt/data/music-share" ] && ok "--check writes nothing" || bad "--check wrote something"
+$A --check > "$R/c" 2>&1; [ ! -e "$R/etc/musicshare.conf" ] && [ ! -d "$R/mnt/data/apps/music-share" ] && ok "--check writes nothing" || bad "--check wrote something"
 $A --yes > "$R/o1" 2>&1 || { bad "install failed"; cat "$R/o1"; }
-[ -d "$R/mnt/data/music-share/data" ] && [ -d "$R/mnt/data/music-share/backup" ] && [ -d "$R/mnt/data/music-share/restore" ] && ok "data, backup and restore folders created" || bad "folders"
+[ -d "$R/mnt/data/apps/music-share/data" ] && [ -d "$R/mnt/data/apps/music-share/backup" ] && [ -d "$R/mnt/data/apps/music-share/restore" ] && ok "data, backup and restore folders created" || bad "folders"
 grep -q '^rc_pre() {$' "$R/etc/rc.d/musicshare" && grep -q ' on /mnt/data type ' "$R/etc/rc.d/musicshare" && ok "service script refuses to start unless /mnt/data is mounted and holds .volume-ok" || bad "rc_pre guard"
 grep -q 'daemon_flags="-m waitress --listen=127.0.0.1:8101 --threads=4 wsgi:app"' "$R/etc/rc.d/musicshare" && grep -q 'daemon_user="_musicshare"' "$R/etc/rc.d/musicshare" && ok "service script: port 8101, user _musicshare" || bad "rc.d"
-grep -q '^MUSICSHARE_BASE_PATH=/music$' "$R/etc/musicshare.conf" && grep -q '^MUSICSHARE_BACKUP_DIR=/mnt/data/music-share/backup$' "$R/etc/musicshare.conf" && grep -q '^MUSICSHARE_DATA_DIR=/mnt/data/music-share/data$' "$R/etc/musicshare.conf" && ok "conf has the base path and the backup folder" || bad "conf"
+grep -q '^MUSICSHARE_BASE_PATH=/music$' "$R/etc/musicshare.conf" && grep -q '^MUSICSHARE_BACKUP_DIR=/mnt/data/apps/music-share/backup$' "$R/etc/musicshare.conf" && grep -q '^MUSICSHARE_DATA_DIR=/mnt/data/apps/music-share/data$' "$R/etc/musicshare.conf" && ok "conf has the base path and the backup folder" || bad "conf"
 for need in '<musicshare> { 127.0.0.1 }' 'path "/music" forward to <musicshare>' 'path "/music/\*" forward to <musicshare>' 'forward to <musicshare> port 8101'; do
   [ "$(grep -c "$need" "$R/etc/relayd.conf")" = 1 ] && ok "relayd has exactly one: $need" || bad "relayd: $need"
 done

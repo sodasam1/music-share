@@ -12,7 +12,7 @@ rules: your audio stays as plain files, metadata in one SQLite file, Flask + wai
 - **Public** (no login): `/music/` lists what you marked Listed (tracks and playlists). `/music/t/<token>` plays one track,
   `/music/p/<token>` one playlist. Share pages are `noindex`. A playlist link never reveals its tracks' own links.
 - **Backup / restore**: "Back up now" (database copy + every original, copied once); restore into an **empty** library from
-  `/mnt/data/music-share/restore`. Same shape as riffbox's.
+  `/mnt/data/apps/music-share/restore`. Same shape as riffbox's.
 
 ## Decisions to know
 - Links are 128 random bits. Anyone holding a link can play (and, if allowed, download) that item. No cookie, no account.
@@ -32,7 +32,7 @@ Data lives on the separate volume mounted at `/mnt/data` (folders `music-share/{
    `_musicshare` user and folders, writes the service script and `/etc/musicshare.conf`, registers with the site login (own key), and asks `y` before adding
    `/music` routes to `/etc/relayd.conf`.
 3. Everyday updates: upload again, `doas sh ~/music-share/deploy/install.sh --app-files-only`.
-4. Pull `/mnt/data/music-share/backup` to your computer with FreeFileSync (like riffbox's backups).
+4. Pull `/mnt/data/apps/music-share/backup` to your computer with FreeFileSync (like riffbox's backups).
 
 ## Tests (offline)
 ```
