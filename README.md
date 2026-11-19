@@ -27,11 +27,11 @@ rules: your audio stays as plain files, metadata in one SQLite file, Flask + wai
 
 ## Install (after the site login: personal-site `RESTORE.html` B2)
 Data lives on the separate volume mounted at `/mnt/data` (folders `music-share/{data,backup,restore}`); the installer refuses to run until that volume is mounted and holds `/mnt/data/.volume-ok`. Program files stay on the boot disk.
-1. Upload this folder to `~/music-share` on the server (FreeFileSync, as for riffbox; no `tests/` needed).
-2. `doas sh ~/music-share/deploy/install.sh --check` (changes nothing), then `doas sh ~/music-share/deploy/install.sh`. It installs the packages, makes the
+1. Upload this folder to `~/staging/music-share` on the server (FreeFileSync, as for riffbox; no `tests/` needed).
+2. `doas sh ~/staging/music-share/deploy/install.sh --check` (changes nothing), then `doas sh ~/staging/music-share/deploy/install.sh`. It installs the packages, makes the
    `_musicshare` user and folders, writes the service script and `/etc/musicshare.conf`, registers with the site login (own key), and asks `y` before adding
    `/music` routes to `/etc/relayd.conf`.
-3. Everyday updates: upload again, `doas sh ~/music-share/deploy/install.sh --app-files-only`.
+3. Everyday updates: upload again, `doas sh ~/staging/music-share/deploy/install.sh --app-files-only`.
 4. Pull `/mnt/data/apps/music-share/backup` to your computer with FreeFileSync (like riffbox's backups).
 
 ## Tests (offline)
