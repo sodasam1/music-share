@@ -5,13 +5,16 @@ TITLE="Music share"
 BASE_PATH=/music
 PORT=8101
 PKGS="py3-flask py3-waitress ffmpeg"
-SVC_HOME=/var/music-share
+# All data lives on the separate volume (see docs/STORAGE.md in personal-site). Program files stay on the boot disk.
+DATA_ROOT=/mnt/data
+REQUIRE_MOUNT=$DATA_ROOT
+SVC_HOME=/var/empty
 SRC_MARKER="app/wsgi.py static/studio.html"
 HEALTH_PATH=/music/health
 SITE_AUTH=1
-DIRS="/var/music-share,@svc,@svc,750 /var/music-share-backup,@svc,@svc,755 /var/music-share-restore,@login,@login,755"
-CONF_LINES="MUSICSHARE_DATA_DIR=/var/music-share
+DIRS="$DATA_ROOT/apps/music-share/data,@svc,@svc,750 $DATA_ROOT/apps/music-share/backup,@svc,@svc,755 $DATA_ROOT/apps/music-share/restore,@login,@login,755"
+CONF_LINES="MUSICSHARE_DATA_DIR=$DATA_ROOT/apps/music-share/data
 MUSICSHARE_BASE_PATH=/music
 MUSICSHARE_STATIC_DIR=/usr/local/music-share/static
-MUSICSHARE_BACKUP_DIR=/var/music-share-backup
-MUSICSHARE_RESTORE_DIR=/var/music-share-restore"
+MUSICSHARE_BACKUP_DIR=$DATA_ROOT/apps/music-share/backup
+MUSICSHARE_RESTORE_DIR=$DATA_ROOT/apps/music-share/restore"
