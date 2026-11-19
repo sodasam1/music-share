@@ -9,6 +9,7 @@
   const audio = new Audio();
   audio.preload = "none";
   const playlist = !!document.querySelector("[data-playlist]");
+  audio.setAttribute("playsinline", "");
   let current = null, loading = false;
   const fmt = (s) => (isFinite(s) && s >= 0 ? Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0") : "0:00");
   const titleOf = (it) => it.querySelector(".title").textContent;
@@ -31,6 +32,7 @@
       current = it;
       audio.src = it.dataset.audio;
       barTitle.textContent = titleOf(it);
+      window.lockScreen.set(titleOf(it));
       bar.hidden = false;
       if (at) audio.addEventListener("loadedmetadata", () => { audio.currentTime = at; }, { once: true });
     } else if (at != null) audio.currentTime = at;
@@ -69,6 +71,7 @@
     const i = items.indexOf(current);
     if (playlist && i >= 0 && i + 1 < items.length) start(items[i + 1]); else paint();
   });
+  window.lockScreen.bind(audio, playlist ? { prev: () => { const i = items.indexOf(current); if (i > 0) start(items[i - 1]); }, next: () => { const i = items.indexOf(current); if (i >= 0 && i + 1 < items.length) start(items[i + 1]); } } : null);
   barPlay.addEventListener("click", () => { if (current) toggle(current); else toggle(items[0]); });
   function seekBar(e) { const r = barProg.getBoundingClientRect(), d = audio.duration; if (d) audio.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * d; }
   barProg.addEventListener("pointerdown", (e) => { barProg.setPointerCapture(e.pointerId); seekBar(e); barProg.onpointermove = seekBar; });

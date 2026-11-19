@@ -1,0 +1,60 @@
+/* Phones and touch screens (music-share only; the shared look is listen.css). Rules are grouped by what they fix. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }                 /* iOS must not enlarge text when the phone turns sideways */
+button, a, summary, .play-btn, [role="button"] { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }   /* no grey flash, no double-tap zoom delay */
+
+/* keep content out from under the notch, the rounded corners and the home bar (needs viewport-fit=cover, set in the page head) */
+.wrap { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+.player-bar { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+.wrap { padding-bottom: calc(7rem + env(safe-area-inset-bottom, 0px)); }
+.page-head details > div { max-width: calc(100vw - 32px); }
+
+/* a finger has no hover: hover effects would stay "stuck" on after a tap */
+@media (hover: none) {
+  .play-btn:hover:not(:disabled) { filter: none; transform: none; }
+  a.title:hover, .lead-row:hover .title { text-decoration: none; }
+  .page-head a.quiet:hover { color: var(--muted); text-decoration: none; }
+  button:hover:not(:disabled), .btn:hover { border-color: var(--line); }
+  button.primary:hover:not(:disabled) { border-color: var(--accent); }
+  .studio .drop:hover { border-color: var(--line); color: var(--muted); }
+}
+
+/* targets a thumb can hit: at least 44 x 44 CSS pixels (Apple's guideline; WCAG 2.2 asks for 24, 2.5.5 for 44) */
+@media (pointer: coarse) {
+  button, .btn { min-height: 44px; padding-left: .9rem; padding-right: .9rem; }
+  .studio .actions button, .studio .actions .btn { min-height: 44px; font-size: .95rem; }
+  .studio .actions { gap: 10px; }
+  .studio nav.tabs { gap: 6px; }
+  .studio nav.tabs button { min-height: 44px; padding: .45rem .7rem; }
+  .play-btn, .play-btn.small { width: 44px; height: 44px; }
+  .page-head a.quiet, .page-head summary { display: inline-flex; align-items: center; min-height: 44px; padding: 0 .5rem; }
+  .track .links a { display: inline-block; padding: .75rem .4rem; margin-left: -.4rem; }
+  .lead-row { min-height: 60px; }
+  .brand { min-height: 44px; }
+  .accent-row button { width: 44px; height: 44px; min-height: 44px; }
+  .accent-row { gap: 4px; }
+  .bar-progress { height: 44px; }                                                 /* the line stays thin; the part you can press is taller */
+  .bar-progress::before, .bar-fill { height: 4px; }
+  .studio .drop { padding: 2rem 1rem; }
+  .studio .pl-items li { padding: .5rem 0; }
+  /* 16 px or larger, or iOS zooms the page when a box gets focus and does not zoom back out */
+  input[type=text], input[type=password], input[type=search], input[type=number], textarea, select, .studio select { font-size: 16px; }
+  .studio select { min-height: 44px; }
+}
+
+/* narrow screens */
+@media (max-width: 520px) {
+  .wave-box .t { font-size: .75rem; }
+  .wave-box { margin-bottom: 1.6rem; }
+  .track-meta { font-size: .88rem; }
+  .hero .wave-box canvas.wave { height: 96px; }
+  .studio .edit input, .studio .edit textarea { width: 100%; }
+  .studio .actions button { flex: 1 1 auto; }
+  .studio nav.tabs { gap: 0; }
+  .studio nav.tabs button { flex: 1 1 0; padding-left: .2rem; padding-right: .2rem; }   /* four tabs share the width: none is cut off */
+}
+/* a phone turned sideways: the bottom bar must not eat the screen */
+@media (max-height: 480px) and (orientation: landscape) {
+  .player-bar { padding-top: .35rem; padding-bottom: calc(.35rem + env(safe-area-inset-bottom, 0px)); }
+  .wrap { padding-bottom: 5rem; }
+  .hero .wave-box canvas.wave { height: 72px; }
+}

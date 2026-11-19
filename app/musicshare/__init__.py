@@ -253,8 +253,8 @@ def create_app(overrides=None):
     assets = {}
     # A page needs several small CSS and JS files; each extra file is another connection and TLS handshake on a one-CPU server. These "bundles" are made
     # by joining the real files in memory (nothing to build, nothing extra to keep in step), so a page loads one stylesheet and one script.
-    BUNDLES = {"bundle-public.css": ["minimal/minimal.css", "listen.css"], "bundle-studio.css": ["minimal/minimal.css", "listen.css", "musicshare.css"],
-               "bundle-public.js": ["wave/wave.js", "public.js"], "bundle-studio.js": ["minimal/theme-menu.js", "wave/wave.js", "studio.js"]}
+    BUNDLES = {"bundle-public.css": ["minimal/minimal.css", "listen.css", "mobile.css"], "bundle-studio.css": ["minimal/minimal.css", "listen.css", "musicshare.css", "mobile.css"],
+               "bundle-public.js": ["mobile.js", "wave/wave.js", "public.js"], "bundle-studio.js": ["minimal/theme-menu.js", "mobile.js", "wave/wave.js", "studio.js"]}
 
     def load_asset(name):
         parts = BUNDLES.get(name)
