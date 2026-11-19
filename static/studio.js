@@ -225,6 +225,9 @@
       const row = (k, v) => out.append(h("div", { class: "track-meta" }, k + ": " + v));
       row("Saving to the data volume", d.commit_data_volume_ms == null ? "could not test" : d.commit_data_volume_ms + " ms");
       row("Saving to the boot disk", d.commit_boot_disk_ms == null ? "could not test" : d.commit_boot_disk_ms + " ms");
+      const q = (o) => (o ? o.save_ms + " ms a save, " + o.checkpoint_ms + " ms to reach the disk (background)" : "could not test");
+      row("A database save on the data volume", q(d.sqlite_data_volume));
+      row("A database save on the boot disk", q(d.sqlite_boot_disk));
       row("Reading the database (cold)", d.database_read_ms + " ms");
       row("Server load (1, 5, 15 min)", d.load ? d.load.join(", ") + " on " + d.cpus + " CPU" : "unknown");
       if (d.swap) row("Swap", d.swap);

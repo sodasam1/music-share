@@ -664,12 +664,34 @@ def create_app(overrides=None):
             return None
         return round(statistics.median(out), 1)
 
+    def sqlite_ms(directory):
+        """The same, but through SQLite with this app's settings (WAL, synchronous NORMAL) in a throwaway file: the middle number is a normal save, the last is the background checkpoint that does reach the disk."""
+        p = Path(directory) / (".speed-db-" + db.new_token())
+        try:
+            c = sqlite3.connect(str(p), isolation_level=None)
+            try:
+                c.execute("PRAGMA journal_mode = WAL"); c.execute("PRAGMA synchronous = NORMAL")
+                c.execute("CREATE TABLE t (x TEXT)")
+                times = []
+                for _ in range(5):
+                    t = time.perf_counter(); c.execute("INSERT INTO t VALUES ('x')"); times.append((time.perf_counter() - t) * 1000)
+                t = time.perf_counter(); c.execute("PRAGMA wal_checkpoint(TRUNCATE)"); ck = (time.perf_counter() - t) * 1000
+            finally:
+                c.close()
+            return {"save_ms": round(sorted(times)[2], 1), "checkpoint_ms": round(ck, 1)}
+        except (OSError, sqlite3.Error):
+            return None
+        finally:
+            for suffix in ("", "-wal", "-shm"):
+                Path(str(p) + suffix).unlink(missing_ok=True)
+
     @bp.get("/api/diagnostics")
     @auth.owner
     def diagnostics():
         """A speed check you can run from the Studio: is it the disk, the CPU, or neither? Writes and deletes a few 4 KB test files; changes nothing else."""
         data_ms = commit_ms(data_dir / "tmp")
         boot_ms = commit_ms(cfg.get("MUSICSHARE_BOOT_TMP", "/var/tmp"))
+        sql_data, sql_boot = sqlite_ms(data_dir / "tmp"), sqlite_ms(cfg.get("MUSICSHARE_BOOT_TMP", "/var/tmp"))
         t = time.perf_counter()
         c = db.connect(db_path)                                       # a fresh connection: the cold path a first visit takes
         try:
@@ -700,7 +722,7 @@ def create_app(overrides=None):
         if not advice:
             advice.append("Nothing looks slow on the server. If pages still load slowly, the time is going on the network or in relayd; open the browser's developer tools, Network tab, and compare the Server-Timing line with the total time.")
         return jsonify(commit_data_volume_ms=data_ms, commit_boot_disk_ms=boot_ms, database_read_ms=read_ms, tracks=n, load=load, cpus=cpus, swap=swap,
-                       jobs_pending=worker.pending(), counts_pending=counts.pending(), database_dir=str(db_dir), advice=advice)
+                       sqlite_data_volume=sql_data, sqlite_boot_disk=sql_boot, jobs_pending=worker.pending(), counts_pending=counts.pending(), database_dir=str(db_dir), advice=advice)
 
     @bp.post("/api/backup")
     @auth.owner

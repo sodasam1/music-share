@@ -617,3 +617,10 @@ def test_pages_are_set_up_for_phones(owner, guest):
     assert "pointer: coarse" in css and "safe-area-inset-bottom" in css and "font-size: 16px" in css
     js = guest.get(re.search(r'src="([^"]*bundle-public\.js[^"]*)"', guest.get("/music-share/").get_data(as_text=True)).group(1)).get_data(as_text=True)
     assert "mediaSession" in js and 'pan-y' in js
+
+
+def test_speed_check_times_a_real_sqlite_save_on_both_disks(owner):
+    d = owner.get("/music-share/api/diagnostics").json
+    for key in ("sqlite_data_volume", "sqlite_boot_disk"):
+        assert d[key] is None or {"save_ms", "checkpoint_ms"} <= set(d[key])
+    assert d["sqlite_data_volume"] is not None
