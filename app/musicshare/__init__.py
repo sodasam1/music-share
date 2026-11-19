@@ -441,9 +441,9 @@ def create_app(overrides=None):
                 with open(tmp, "rb") as fh:
                     for chunk in iter(lambda: fh.read(1 << 20), b""):
                         digest.update(chunk)
+                title = clean((re.sub(r"[_]+", " ", Path(orig).stem) or "Untitled")[:MAX_TITLE], MAX_TITLE, "title", False) or "Untitled"   # a very long file name must shorten the title, not fail the upload
                 stored = db.new_token().replace("-", "x").replace("_", "y") + ext
                 shutil.move(str(tmp), data_dir / "audio" / stored)
-                title = clean(re.sub(r"[_]+", " ", Path(orig).stem) or "Untitled", MAX_TITLE, "title", True)
                 cur = conn().execute(
                     "INSERT INTO tracks (token, title, visibility, created_at, filename, orig_filename, mime, size, sha256) VALUES (?,?,?,?,?,?,?,?,?)",
                     (db.new_token(), title[:MAX_TITLE], visibility, db.now_iso(), stored, orig, MIME[ext], (data_dir / "audio" / stored).stat().st_size, digest.hexdigest()))
