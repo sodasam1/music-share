@@ -1,13 +1,15 @@
-<article class="item" data-audio="{{ t.audio }}">
-  <div class="row">
-    <button class="play" type="button" aria-label="Play {{ t.title }}">&#9654;</button>
-    <div class="grow">
+<article class="item track" data-audio="{{ t.audio }}">
+  <div class="track-head">
+    <button class="play play-btn{% if big %} big{% endif %}" type="button" aria-label="Play {{ t.title }}" data-state="play"></button>
+    <div class="track-text">
       {% if link %}<a class="title" href="{{ t.page }}">{{ t.title }}</a>{% else %}<span class="title">{{ t.title }}</span>{% endif %}
-      <div class="muted small">{{ t.created }}</div>
+      <div class="track-meta">{{ t.created }}{% if t.length %} &middot; {{ t.length }}{% endif %}</div>
     </div>
-    <span class="muted time" aria-live="off"></span>
   </div>
-  <canvas class="wave" data-peaks="{{ t.peaks }}" data-duration="{{ t.duration }}"></canvas>
+  <div class="wave-box">
+    <canvas class="wave" data-peaks="{{ t.peaks }}" data-duration="{{ t.duration }}"></canvas>
+    <span class="t t-now">0:00</span><span class="t t-len">{{ t.length }}</span>
+  </div>
   {% if t.notes %}<p class="muted notes">{{ t.notes }}</p>{% endif %}
-  {% if download and t.download %}<p class="small"><a href="{{ t.download }}">Download</a></p>{% endif %}
+  {% if download and t.download %}<p class="links"><a href="{{ t.download }}">Download</a></p>{% endif %}
 </article>

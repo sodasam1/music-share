@@ -1,12 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Music{% endblock %}
 {% block body %}
-<header class="site"><h1>Music</h1></header>
 {% if playlists %}
-<h2>Playlists</h2>
-{% for p in playlists %}<div class="row"><div class="grow"><a class="title" href="{{ p.page }}">{{ p.title }}</a>{% if p.notes %}<div class="muted notes">{{ p.notes }}</div>{% endif %}</div></div>{% endfor %}
+<h2 class="section">Playlists</h2>
+{% for p in playlists %}<a class="lead-row" href="{{ p.page }}"><div class="track-text"><span class="title">{{ p.title }}</span>{% if p.notes %}<div class="track-meta">{{ p.notes }}</div>{% endif %}</div></a>{% endfor %}
 {% endif %}
-<h2>Tracks</h2>
-{% for t in tracks %}{% with link=True, download=False %}{% include "_item.html" %}{% endwith %}{% else %}<p class="muted">Nothing is listed here yet.{% if owner %} Upload tracks, and mark them Listed, in the Studio.{% endif %}</p>{% endfor %}
-{% if owner %}<p class="small muted owner-link"><a href="{{ base }}/studio">Studio</a></p>{% endif %}
+{% if tracks %}<h2 class="section">Tracks</h2>{% endif %}
+{% for t in tracks %}{% with link=True, download=False, big=False %}{% include "_item.html" %}{% endwith %}{% else %}<p class="empty">Nothing is listed here yet.{% if owner %} Upload tracks, and mark them Listed, in the <a href="{{ base }}/studio">Studio</a>.{% endif %}</p>{% endfor %}
 {% endblock %}

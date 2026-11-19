@@ -8,6 +8,7 @@ Every route is declared @public, @owner or @token; one with no declaration is ow
 import gzip
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -16,7 +17,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from flask import Blueprint, Flask, abort, g, jsonify, redirect, render_template, request, send_file, send_from_directory
+from flask import Blueprint, Flask, Response, abort, g, jsonify, redirect, render_template, request, send_file
 from kitaudio import media
 from siteauth import SiteAuth
 
@@ -30,6 +31,9 @@ MIME = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".mp4": 
         ".aac": "audio/aac", ".aif": "audio/aiff", ".aiff": "audio/aiff", ".caf": "audio/x-caf"}
 CTRL = re.compile(r"[\x00-\x1f\x7f]")
 MAX_TITLE, MAX_NOTES = 200, 2000
+# Link-preview robots (a chat app fetching the page when you paste a link) are not listeners: they are not counted as opens.
+ROBOT = re.compile(r"bot|crawl|spider|preview|facebookexternalhit|slack|whatsapp|telegram|discord|skype|linkedin|embedly|curl|wget|python-requests|headless", re.I)
+TEXT_TYPES = ("text/css", "text/javascript", "application/javascript", "image/svg+xml", "text/html")
 
 
 class Invalid(Exception):
@@ -127,14 +131,14 @@ def create_app(overrides=None):
     def link(kind, token):
         return f"{base}/{kind}/{token}"
 
-    def track_dict(r, owner=True):
-        d = {"id": r["id"], "title": r["title"], "notes": r["notes"], "visibility": r["visibility"], "created_at": r["created_at"],
-             "archived": r["archived_at"] is not None, "duration_s": r["duration_s"], "peaks": json.loads(r["peaks"]) if r["peaks"] else [],
-             "analysis_status": r["analysis_status"], "size": r["size"], "orig_filename": r["orig_filename"]}
-        if owner:
-            d.update(token=r["token"], link=link("t", r["token"]), open_count=r["open_count"], first_opened_at=r["first_opened_at"],
-                     last_opened_at=r["last_opened_at"], audio=f"{base}/api/audio/{r['id']}")
-        return d
+    def track_dict(r):
+        """A track as the Studio sees it (only ever sent to the owner)."""
+        return {"id": r["id"], "title": r["title"], "notes": r["notes"], "visibility": r["visibility"], "created_at": r["created_at"],
+                "archived": r["archived_at"] is not None, "duration_s": r["duration_s"], "peaks": json.loads(r["peaks"]) if r["peaks"] else [],
+                "analysis_status": r["analysis_status"], "size": r["size"], "orig_filename": r["orig_filename"],
+                "token": r["token"], "link": link("t", r["token"]), "audio": f"{base}/api/audio/{r['id']}",
+                "open_count": r["open_count"], "first_opened_at": r["first_opened_at"], "last_opened_at": r["last_opened_at"],
+                "play_count": r["play_count"], "last_played_at": r["last_played_at"]}
 
     def playlist_dict(r, with_items=True):
         d = {"id": r["id"], "title": r["title"], "notes": r["notes"], "visibility": r["visibility"], "created_at": r["created_at"],
@@ -151,7 +155,7 @@ def create_app(overrides=None):
         if not path.is_file():
             abort(404)
         resp = send_file(path, mimetype=mime, conditional=True, max_age=0, download_name=row["orig_filename"],
-                         as_attachment=request.args.get("download") == "1" and show_download)
+                         as_attachment=request.args.get("download") == "1" and (show_download or auth.is_owner()))
         resp.headers["Accept-Ranges"] = "bytes"
         resp.headers["Cache-Control"] = "private, max-age=600"
         return resp
@@ -163,16 +167,45 @@ def create_app(overrides=None):
         return row
 
     def count_open(table, row):
-        if auth.is_owner():                                     # your own visits do not count
+        """Count a person opening a page. Not the owner, not a HEAD request, not a link-preview robot (a chat app fetches the page when you paste a link)."""
+        if auth.is_owner() or request.method != "GET" or ROBOT.search(request.headers.get("User-Agent", "")):
             return
         now = db.now_iso()
         conn().execute(f"UPDATE {table} SET open_count = open_count + 1, last_opened_at = ?, first_opened_at = COALESCE(first_opened_at, ?) WHERE id = ?", (now, now, row["id"]))
         conn().commit()
 
-    def pub(r):
-        return {"title": r["title"], "notes": r["notes"], "peaks": ",".join(str(x) for x in (json.loads(r["peaks"]) if r["peaks"] else [])),
-                "duration": r["duration_s"] or 0, "audio": link("a", r["token"]), "page": link("t", r["token"]), "created": r["created_at"][:10],
-                "download": f"{link('a', r['token'])}?download=1" if show_download else None}
+    recent_plays = {}                      # (client, track id) -> when: one press of play can fetch the audio more than once
+
+    def count_play(row):
+        """Count a listener starting a track: the audio is requested from its first byte. Seeking asks for later bytes and is not counted."""
+        rng = request.headers.get("Range", "")
+        if auth.is_owner() or request.method != "GET" or ROBOT.search(request.headers.get("User-Agent", "")) or (rng and not rng.startswith("bytes=0-")):
+            return
+        key, now = (request.remote_addr or "", request.headers.get("X-Forwarded-For", "").split(",")[-1].strip(), row["id"]), time.time()
+        if now - recent_plays.get(key, 0) < 600:
+            return
+        if len(recent_plays) > 2000:
+            recent_plays.clear()
+        recent_plays[key] = now
+        stamp = db.now_iso()
+        conn().execute("UPDATE tracks SET play_count = play_count + 1, last_played_at = ? WHERE id = ?", (stamp, row["id"]))
+        conn().commit()
+
+    def fit(peaks, n):
+        """At most n bars: the loudest of each group, so the shape stays and the page gets smaller."""
+        if len(peaks) <= n:
+            return peaks
+        return [max(peaks[i * len(peaks) // n:(i + 1) * len(peaks) // n]) for i in range(n)]
+
+    def duration_text(sec):
+        sec = int(round(sec or 0))
+        return f"{sec // 60}:{sec % 60:02d}" if sec else ""
+
+    def pub(r, bars=200):
+        peaks = fit(json.loads(r["peaks"]), bars) if r["peaks"] else []
+        return {"title": r["title"], "notes": r["notes"], "peaks": ",".join(map(str, peaks)),
+                "duration": r["duration_s"] or 0, "length": duration_text(r["duration_s"]), "audio": link("a", r["token"]), "page": link("t", r["token"]),
+                "created": r["created_at"][:10], "download": f"{link('a', r['token'])}?download=1" if show_download else None}
 
     # ---- public pages -----------------------------------------------------------------------------------------
     @bp.get("/health")
@@ -180,12 +213,47 @@ def create_app(overrides=None):
     def health():
         return jsonify(ok=True)
 
+    # Static files: each is read once, compressed once, and kept in memory. Pages refer to them as /static/x.css?v=<hash of the content>,
+    # which may be cached for a year (the address changes when the file does); a bare address is revalidated with its ETag.
+    assets = {}
+
+    def load_asset(name):
+        path = (static_dir / name).resolve()
+        if name.startswith(".") or "/." in name or static_dir.resolve() not in path.parents or not path.is_file():
+            return None
+        st = path.stat()
+        hit = assets.get(name)
+        if hit is None or hit["stamp"] != (st.st_mtime_ns, st.st_size):
+            raw = path.read_bytes()
+            mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            hit = {"stamp": (st.st_mtime_ns, st.st_size), "raw": raw, "mime": mime, "etag": '"' + hashlib.sha1(raw).hexdigest()[:16] + '"',
+                   "gz": gzip.compress(raw, 9) if mime in TEXT_TYPES and len(raw) > 600 else None}
+            assets[name] = hit
+        return hit
+
+    def asset(name):
+        a = load_asset(name)
+        return f"{base}/static/{name}" + (f"?v={a['etag'][1:9]}" if a else "")
+
+    app.jinja_env.globals["asset"] = asset
+
     @bp.get("/static/<path:name>")
     @auth.public
     def static_files(name):
-        if name.startswith(".") or "/." in name or ".." in name.split("/"):
+        a = load_asset(name)
+        if a is None:
             abort(404)
-        return send_from_directory(static_dir, name, max_age=3600)
+        cache = "public, max-age=31536000, immutable" if request.args.get("v") else "no-cache"
+        if request.headers.get("If-None-Match") == a["etag"]:
+            return Response(status=304, headers={"ETag": a["etag"], "Cache-Control": cache})
+        use_gz = a["gz"] is not None and "gzip" in request.headers.get("Accept-Encoding", "")
+        resp = Response(a["gz"] if use_gz else a["raw"], mimetype=a["mime"])
+        resp.headers["ETag"] = a["etag"]
+        resp.headers["Cache-Control"] = cache
+        resp.vary.add("Accept-Encoding")
+        if use_gz:
+            resp.headers["Content-Encoding"] = "gzip"
+        return resp
 
     @bp.get("/")
     @auth.public
@@ -193,7 +261,7 @@ def create_app(overrides=None):
         tracks = conn().execute("SELECT * FROM tracks WHERE visibility = 'listed' AND archived_at IS NULL ORDER BY created_at DESC, id DESC").fetchall()
         lists = conn().execute("SELECT * FROM playlists WHERE visibility = 'listed' AND archived_at IS NULL ORDER BY created_at DESC, id DESC").fetchall()
         # `owner` only decides whether a quiet link to the Studio is shown; the page is otherwise the same for everyone
-        return render_template("index.html", base=base, owner=auth.is_owner(), tracks=[pub(t) for t in tracks],
+        return render_template("index.html", base=base, owner=auth.is_owner(), tracks=[pub(t, 100) for t in tracks],
                                playlists=[{"title": p["title"], "notes": p["notes"], "page": link("p", p["token"])} for p in lists])
 
     @bp.get("/t/<token>")
@@ -206,7 +274,9 @@ def create_app(overrides=None):
     @bp.get("/a/<token>")
     @auth.public
     def track_audio(token):
-        return serve_audio(track_by_token(token))
+        row = track_by_token(token)
+        count_play(row)
+        return serve_audio(row)
 
     def playlist_by_token(token):
         row = conn().execute("SELECT * FROM playlists WHERE token = ?", (token,)).fetchone()
@@ -222,7 +292,7 @@ def create_app(overrides=None):
         count_open("playlists", pl)
         items = []
         for r in rows:
-            d = pub(r)
+            d = pub(r, 100)
             d["audio"] = f"{base}/pa/{pl['token']}/{r['id']}"
             d["download"] = f"{d['audio']}?download=1" if show_download else None        # never the track's own link: a playlist link must not reveal it
             d["page"] = None
@@ -236,13 +306,14 @@ def create_app(overrides=None):
         row = conn().execute("SELECT t.* FROM playlist_items i JOIN tracks t ON t.id = i.track_id WHERE i.playlist_id = ? AND t.id = ?", (pl["id"], track_id)).fetchone()
         if row is None:
             abort(404)
+        count_play(row)
         return serve_audio(row)
 
     # ---- the owner's page ---------------------------------------------------------------------------------------
     @bp.get("/studio")
     @auth.owner
     def studio():
-        return send_file(static_dir / "studio.html", mimetype="text/html", max_age=0)
+        return render_template("studio.html", base=base)
 
     @bp.get("/api/session")
     @auth.owner
@@ -505,6 +576,7 @@ def create_app(overrides=None):
             n, problems = backupmod.restore(restore_dir, data_dir)
         except (ValueError, OSError, sqlite3.Error) as exc:
             return err(str(exc), 409)
+        db.init(db_path)                                   # a backup made by an older version gets the new columns
         worker.backfill()
         return jsonify(ok=True, tracks=n, problems=problems)
 
