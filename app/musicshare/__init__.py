@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import sqlite3
+import tempfile
 import time
 from pathlib import Path
 
@@ -59,6 +60,11 @@ def create_app(overrides=None):
     app.config.update(MAX_CONTENT_LENGTH=int(cfg.get("MUSICSHARE_MAX_UPLOAD_MB", "300")) * 1024 * 1024, TESTING=bool(cfg.get("TESTING")))
     (data_dir / "audio").mkdir(parents=True, exist_ok=True)
     (data_dir / "tmp").mkdir(parents=True, exist_ok=True)
+    # Werkzeug parks a big upload in a temp file while it parses the form (here up to MUSICSHARE_MAX_UPLOAD_MB). Keep that on the data volume,
+    # not in the system /tmp on the small boot disk.
+    tempfile.tempdir = str(data_dir / "tmp")
+    for stale in (data_dir / "tmp").glob("*.part"):          # half-written uploads left by a crash or a restart mid-upload
+        stale.unlink(missing_ok=True)
     db_path = data_dir / "musicshare.db"
     db.init(db_path)
     worker = jobs.Worker(data_dir, ffmpeg, inline=bool(cfg.get("JOBS_SYNC")))
