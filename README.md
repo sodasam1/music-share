@@ -5,12 +5,12 @@ Built on the shared kit from the `personal-site` repo (installer, one site-wide 
 rules: your audio stays as plain files, metadata in one SQLite file, Flask + waitress + ffmpeg only, uploaded by hand with FreeFileSync.
 
 ## What it does
-- **Studio** (`/music/studio`, owner only): drag in audio files; each gets a waveform, a title (from the file name), notes, and a secret link.
+- **Studio** (`/music-share/studio`, owner only): drag in audio files; each gets a waveform, a title (from the file name), notes, and a secret link.
   Per track: **Listed** (also on the public page) or **Unlisted** (only people with the link). Copy link, Open, Edit, Archive, New link
   (revokes the old one), Delete forever (type the exact title). Playlists: ordered, own link, own listed/unlisted, archive.
   See how often a link was opened (your own visits are not counted).
-- **Public** (no login): `/music/` lists what you marked Listed (when you are signed in it also shows a small "Studio" link at the bottom; signed out, bookmark `/music/studio`, which sends you to the login first) (tracks and playlists). `/music/t/<token>` plays one track,
-  `/music/p/<token>` one playlist. Share pages are `noindex`. A playlist link never reveals its tracks' own links.
+- **Public** (no login): `/music-share/` lists what you marked Listed (when you are signed in it also shows a small "Studio" link at the bottom; signed out, bookmark `/music-share/studio`, which sends you to the login first) (tracks and playlists). `/music-share/t/<token>` plays one track,
+  `/music-share/p/<token>` one playlist. Share pages are `noindex`. A playlist link never reveals its tracks' own links.
 - **Backup / restore**: "Back up now" (database copy + every original, copied once); restore into an **empty** library from
   `/mnt/data/apps/music-share/restore`. Same shape as riffbox's.
 
@@ -22,7 +22,7 @@ rules: your audio stays as plain files, metadata in one SQLite file, Flask + wai
 - Not built: comments, versions (that is the Version Control app), export to a zip/folder (backup/restore only).
 
 ## Settings (`/etc/musicshare.conf`, written by the installer)
-`MUSICSHARE_DATA_DIR`, `MUSICSHARE_BASE_PATH` (`/music`), `MUSICSHARE_STATIC_DIR`, `MUSICSHARE_BACKUP_DIR`, `MUSICSHARE_RESTORE_DIR`,
+`MUSICSHARE_DATA_DIR`, `MUSICSHARE_BASE_PATH` (`/music-share`), `MUSICSHARE_STATIC_DIR`, `MUSICSHARE_BACKUP_DIR`, `MUSICSHARE_RESTORE_DIR`,
 `MUSICSHARE_MAX_UPLOAD_MB` (300), `MUSICSHARE_SHOW_DOWNLOAD` (1), `MUSICSHARE_ARCHIVE_DISABLES_LINK` (0), `MUSICSHARE_SITE_KEY_FILE`.
 
 ## Install (after the site login: personal-site `RESTORE.html` B2)
@@ -30,7 +30,7 @@ Data lives on the separate volume mounted at `/mnt/data` (folders `music-share/{
 1. Upload this folder to `~/staging/music-share` on the server (FreeFileSync, as for riffbox; no `tests/` needed).
 2. `doas sh ~/staging/music-share/deploy/install.sh --check` (changes nothing), then `doas sh ~/staging/music-share/deploy/install.sh`. It installs the packages, makes the
    `_musicshare` user and folders, writes the service script and `/etc/musicshare.conf`, registers with the site login (own key), and asks `y` before adding
-   `/music` routes to `/etc/relayd.conf`.
+   `/music-share` routes to `/etc/relayd.conf`.
 3. Everyday updates: upload again, `doas sh ~/staging/music-share/deploy/install.sh --app-files-only`.
 4. Pull `/mnt/data/apps/music-share/backup` to your computer with FreeFileSync (like riffbox's backups).
 
