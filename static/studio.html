@@ -16,9 +16,19 @@
 <div class="wrap">
   <header class="site"><h1>Studio</h1><nav><a href="./" target="_blank" rel="noopener">Public page</a></nav>
     <details><summary>Look</summary><div id="theme-menu"></div></details></header>
-  <nav class="tabs" id="tabs"></nav>
+  <nav class="tabs" id="tabs" aria-label="Sections">
+    <button type="button" class="tab" data-tab="tracks" aria-pressed="true">Tracks</button>
+    <button type="button" class="tab" data-tab="archive" aria-pressed="false">Archive</button>
+    <button type="button" class="tab" data-tab="playlists" aria-pressed="false">Playlists</button>
+    <button type="button" class="tab" data-tab="backup" aria-pressed="false">Backup</button>
+  </nav>
   <p id="notice" class="notice" role="status" hidden></p>
-  <main id="main"></main>
+  <main id="main" aria-busy="true">
+    <div class="skeleton" aria-hidden="true"><div class="sk-line"></div><div class="sk-wave"></div></div>
+    <div class="skeleton" aria-hidden="true"><div class="sk-line"></div><div class="sk-wave"></div></div>
+    <div class="skeleton" aria-hidden="true"><div class="sk-line"></div><div class="sk-wave"></div></div>
+    <noscript><p>The Studio needs JavaScript.</p></noscript>
+  </main>
 </div>
 </body>
 </html>

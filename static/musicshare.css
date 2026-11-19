@@ -22,3 +22,13 @@
 
 .owner-link { margin-top: 3rem; text-align: right; }
 .owner-link a { color: var(--muted); }
+
+/* placeholders shown while the Studio's data loads: the page has its shape at once */
+.skeleton { margin: 0 0 1.4rem; }
+.skeleton .sk-line { height: 1.1rem; width: 55%; background: var(--panel); border-radius: var(--r); margin: .7rem 0; }
+.skeleton .sk-wave { height: 64px; background: var(--panel); border-radius: var(--r); }
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton .sk-line, .skeleton .sk-wave { animation: sk-pulse 1.4s ease-in-out infinite; }
+  @keyframes sk-pulse { 50% { opacity: .55; } }
+}
+canvas.wave { background: linear-gradient(var(--line), var(--line)) center / 100% 2px no-repeat; }   /* a flat line until the waveform is drawn */

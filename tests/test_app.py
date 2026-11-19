@@ -330,3 +330,36 @@ def test_studio_link_is_shown_only_to_the_owner(owner, guest):
 def test_owner_empty_state_points_at_the_studio(owner, guest):
     assert "in the Studio" in owner.get("/music-share/").get_data(as_text=True)
     assert "in the Studio" not in guest.get("/music-share/").get_data(as_text=True)
+
+
+# ---- speed: timing header and compression ------------------------------------------------------------------------------------------
+def test_server_timing_header_on_answers(owner, guest):
+    for client, url in ((owner, "/music-share/api/tracks"), (guest, "/music-share/"), (guest, "/music-share/health")):
+        h = client.get(url).headers.get("Server-Timing", "")
+        assert h.startswith("app;dur=") and float(h.split("=")[1]) >= 0
+
+
+def test_big_json_and_html_are_gzipped_when_asked_and_plain_otherwise(owner, guest):
+    import gzip as gz
+    for i in range(8):
+        make(owner, f"Track number {i}.wav", seed=i)
+    plain = owner.get("/music-share/api/tracks")
+    zipped = owner.get("/music-share/api/tracks", headers={"Accept-Encoding": "gzip"})
+    assert "Content-Encoding" not in plain.headers
+    assert zipped.headers["Content-Encoding"] == "gzip" and "Accept-Encoding" in zipped.headers["Vary"]
+    assert json.loads(gz.decompress(zipped.data)) == plain.json
+    assert "Content-Encoding" not in guest.get("/music-share/health", headers={"Accept-Encoding": "gzip"}).headers      # small answers are left alone
+
+
+def test_audio_is_never_compressed(owner, guest):
+    t = make(owner)
+    r = guest.get(f"/music-share/a/{t['token']}", headers={"Accept-Encoding": "gzip", "Range": "bytes=0-9"})
+    assert r.status_code == 206 and "Content-Encoding" not in r.headers
+
+
+def test_studio_page_carries_its_menu_and_placeholders_in_the_html(owner):
+    """The menu and grey placeholders must be in the page itself, so they show before any script or data request finishes."""
+    html = owner.get("/music-share/studio").get_data(as_text=True)
+    for name in ("Tracks", "Archive", "Playlists", "Backup"):
+        assert f">{name}</button>" in html
+    assert html.count('class="skeleton"') == 3 and 'id="tabs"' in html

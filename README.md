@@ -43,3 +43,10 @@ MS_PY=/tmp/v/bin/python node tests/e2e/smoke.cjs                  # real browser
 ```
 The kit under `app/siteauth`, `app/kitaudio`, `static/minimal`, `static/wave`, `deploy/appkit.sh` is vendored from personal-site (`kit.use` lists the parts;
 `sh kit/sync-into.sh` there refreshes it, `sh kit/check-vendored.sh` there checks for drift).
+
+## Why the Studio shows its menu at once (and how to see where time goes)
+The menu and grey placeholder rows are part of `studio.html`, so they appear as soon as that one small file arrives. The page then makes **one** request for what the current tab needs
+(it used to make four in a row before drawing anything), and audio is never loaded until you press play. Waveforms are drawn only for rows near the screen.
+To see whether a slow page is the server or the network: open the browser's developer tools, Network tab, click a request, Timing. The **Server-Timing: app** line is the time this
+server spent on it. Program files (`/usr/local/music-share/static`) are on the boot disk; only the database and audio are on the data volume.
+`MS_PY=... node tests/e2e/first-paint.cjs` times the Studio with an artificial API delay (before: menu at 1367 ms with a 300 ms delay; after: 67 ms).

@@ -5,6 +5,7 @@ Public (no login):    /            the index of everything you marked "listed"
 Owner (site login):   /studio      the page you manage everything from;  /api/...  its JSON
 Every route is declared @public, @owner or @token; one with no declaration is owner-only (see siteauth).
 """
+import gzip
 import hashlib
 import json
 import os
@@ -86,6 +87,26 @@ def create_app(overrides=None):
         c = g.pop("db", None)
         if c is not None:
             c.close()
+
+    @app.before_request
+    def start_timer():
+        g.t0 = time.perf_counter()
+
+    @app.after_request
+    def timing_and_gzip(resp):
+        """Server-Timing: how long this server spent on the request (browsers show it under Network > Timing), so a slow page can be
+        told apart as "slow server/disk" or "slow network". Also gzip for the JSON and HTML answers (the track list carries waveforms)."""
+        t0 = g.get("t0")
+        if t0 is not None:
+            resp.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - t0) * 1000:.1f}"
+        if (resp.status_code == 200 and not resp.direct_passthrough and resp.mimetype in ("application/json", "text/html")
+                and "Content-Encoding" not in resp.headers and "gzip" in request.headers.get("Accept-Encoding", "")):
+            body = resp.get_data()
+            if len(body) > 1000:
+                resp.set_data(gzip.compress(body, 5))
+                resp.headers["Content-Encoding"] = "gzip"
+                resp.vary.add("Accept-Encoding")
+        return resp
 
     @app.after_request
     def headers(resp):
