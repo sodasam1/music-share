@@ -171,7 +171,8 @@ def create_app(overrides=None):
     def index():
         tracks = conn().execute("SELECT * FROM tracks WHERE visibility = 'listed' AND archived_at IS NULL ORDER BY created_at DESC, id DESC").fetchall()
         lists = conn().execute("SELECT * FROM playlists WHERE visibility = 'listed' AND archived_at IS NULL ORDER BY created_at DESC, id DESC").fetchall()
-        return render_template("index.html", base=base, tracks=[pub(t) for t in tracks],
+        # `owner` only decides whether a quiet link to the Studio is shown; the page is otherwise the same for everyone
+        return render_template("index.html", base=base, owner=auth.is_owner(), tracks=[pub(t) for t in tracks],
                                playlists=[{"title": p["title"], "notes": p["notes"], "page": link("p", p["token"])} for p in lists])
 
     @bp.get("/t/<token>")

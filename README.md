@@ -9,7 +9,7 @@ rules: your audio stays as plain files, metadata in one SQLite file, Flask + wai
   Per track: **Listed** (also on the public page) or **Unlisted** (only people with the link). Copy link, Open, Edit, Archive, New link
   (revokes the old one), Delete forever (type the exact title). Playlists: ordered, own link, own listed/unlisted, archive.
   See how often a link was opened (your own visits are not counted).
-- **Public** (no login): `/music/` lists what you marked Listed (tracks and playlists). `/music/t/<token>` plays one track,
+- **Public** (no login): `/music/` lists what you marked Listed (when you are signed in it also shows a small "Studio" link at the bottom; signed out, bookmark `/music/studio`, which sends you to the login first) (tracks and playlists). `/music/t/<token>` plays one track,
   `/music/p/<token>` one playlist. Share pages are `noindex`. A playlist link never reveals its tracks' own links.
 - **Backup / restore**: "Back up now" (database copy + every original, copied once); restore into an **empty** library from
   `/mnt/data/apps/music-share/restore`. Same shape as riffbox's.

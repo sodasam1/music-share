@@ -19,3 +19,6 @@
 .studio .pl-items li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .studio select { width: auto; max-width: 100%; border: 1px solid var(--line); padding: .3rem; background: var(--bg); color: var(--text); }
 .pill-note { color: var(--warn); }
+
+.owner-link { margin-top: 3rem; text-align: right; }
+.owner-link a { color: var(--muted); }

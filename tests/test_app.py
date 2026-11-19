@@ -318,3 +318,15 @@ def test_big_uploads_are_parked_on_the_data_volume_not_the_boot_disks_tmp(owner,
     assert len(big) > 1_000_000
     assert upload(owner, data=big).status_code in (200, 201)                    # a large upload still works with the spill-over folder moved
     assert not list((tmp_path / "data" / "tmp").glob("*.part"))                 # and the upload left no half-written file behind
+
+
+# ---- the quiet link to the Studio -----------------------------------------------------------------------------------------------
+def test_studio_link_is_shown_only_to_the_owner(owner, guest):
+    assert 'href="/music/studio"' in owner.get("/music/").get_data(as_text=True)
+    page = guest.get("/music/").get_data(as_text=True)
+    assert "studio" not in page.lower()                                   # strangers see no hint that an owner side exists
+
+
+def test_owner_empty_state_points_at_the_studio(owner, guest):
+    assert "in the Studio" in owner.get("/music/").get_data(as_text=True)
+    assert "in the Studio" not in guest.get("/music/").get_data(as_text=True)
