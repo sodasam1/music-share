@@ -12,12 +12,12 @@ import sqlite3
 from pathlib import Path
 
 
-def backup(data_dir, dest, keep=14, now=None):
-    """Returns (database_copy_path, new_audio_files_copied, problems)."""
+def backup(data_dir, dest, keep=14, now=None, db_file=None):
+    """Returns (database_copy_path, new_audio_files_copied, problems). The database may live elsewhere than the audio (db_file)."""
     data_dir, dest = Path(data_dir), Path(dest)
-    db_file = data_dir / "musicshare.db"
+    db_file = Path(db_file) if db_file else data_dir / "musicshare.db"
     if not db_file.is_file():
-        raise ValueError(f"no musicshare.db in {data_dir}")
+        raise ValueError(f"no database at {db_file}")
     (dest / "db").mkdir(parents=True, exist_ok=True)
     (dest / "audio").mkdir(parents=True, exist_ok=True)
     stamp = (now or dt.datetime.now(dt.timezone.utc)).strftime("%Y%m%d-%H%M%S")
@@ -77,14 +77,15 @@ def inspect(source):
     return {"ok": True, "tracks": n, "db": str(dbs[-1])}
 
 
-def restore(source, data_dir):
+def restore(source, data_dir, db_file=None):
     """Rebuild the library from a backup folder into an empty data folder. Returns (tracks_restored, problems).
     Every audio file is checked against the checksum stored in the database; a mismatch or a missing file is reported, not hidden."""
     source, data_dir = Path(source), Path(data_dir)
     info = inspect(source)
     if not info["ok"]:
         raise ValueError(info["error"])
-    live = data_dir / "musicshare.db"
+    live = Path(db_file) if db_file else data_dir / "musicshare.db"
+    live.parent.mkdir(parents=True, exist_ok=True)
     if live.is_file():
         c = sqlite3.connect(live)
         try:

@@ -69,3 +69,10 @@ h2.section { font-size: .78rem; text-transform: uppercase; letter-spacing: .09em
 @media (max-width: 520px) { .play-btn { width: 44px; height: 44px; } .hero .title { font-size: 1.3rem; } .bar-time { display: none; } }
 @media (prefers-reduced-motion: reduce) { .play-btn { transition: none; } }
 .pl-title { font-size: 1.6rem; letter-spacing: -.01em; margin: .2rem 0 .4rem; }
+
+/* a play button that has heard you and is waiting for the audio to start */
+.play-btn[data-state="loading"]::before { -webkit-mask: none; mask: none; background: none; border: 3px solid var(--accent-text); border-top-color: transparent; border-radius: 50%; margin: 0; animation: spin .8s linear infinite; }
+.play-btn.big[data-state="loading"]::before { width: 26px; height: 26px; }
+.play-btn.small[data-state="loading"]::before { width: 14px; height: 14px; border-width: 2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .play-btn[data-state="loading"]::before { animation-duration: 2.4s; } }

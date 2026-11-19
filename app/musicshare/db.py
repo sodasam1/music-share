@@ -2,6 +2,7 @@
 import datetime as dt
 import secrets
 import sqlite3
+import threading
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tracks (
@@ -81,3 +82,29 @@ def init(path):
     conn.execute(f"PRAGMA user_version = {VERSION}")
     conn.commit()
     conn.close()
+
+
+_local = threading.local()
+
+
+def thread_conn(path):
+    """One long-lived connection per worker thread (opening a database file on every request costs reads on a slow disk; a kept-open connection
+    also keeps SQLite's page cache). No transaction is ever left open between requests, so each request sees the latest data."""
+    conns = getattr(_local, "conns", None)
+    if conns is None:
+        conns = _local.conns = {}
+    c = conns.get(str(path))
+    if c is None:
+        c = conns[str(path)] = connect(path)
+        c.execute("PRAGMA wal_autocheckpoint = 0")       # request threads never pay for a checkpoint (see checkpoint(), run in the background)
+        c.execute("PRAGMA temp_store = MEMORY")
+    return c
+
+
+def checkpoint(path):
+    """Move the write-ahead log into the main file, without blocking readers or writers. Run from a background thread."""
+    c = connect(path)
+    try:
+        c.execute("PRAGMA wal_checkpoint(PASSIVE)")
+    finally:
+        c.close()

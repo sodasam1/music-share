@@ -11,9 +11,12 @@ import json
 import mimetypes
 import os
 import re
+import statistics
+import subprocess
 import shutil
 import sqlite3
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -23,6 +26,7 @@ from siteauth import SiteAuth
 
 from . import backup as backupmod
 from . import db, jobs
+from .counts import Counts
 from .config import settings
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; "
@@ -70,11 +74,37 @@ def create_app(overrides=None):
     tempfile.tempdir = str(data_dir / "tmp")
     for stale in (data_dir / "tmp").glob("*.part"):          # half-written uploads left by a crash or a restart mid-upload
         stale.unlink(missing_ok=True)
-    db_path = data_dir / "musicshare.db"
+    # The database may live on a different disk than the audio (MUSICSHARE_DB_DIR): a fast boot disk for the small, write-heavy database,
+    # the big volume for the audio. Default: next to the audio, as before.
+    db_dir = Path(cfg.get("MUSICSHARE_DB_DIR") or data_dir)
+    db_dir.mkdir(parents=True, exist_ok=True)
+    db_path = db_dir / "musicshare.db"
     db.init(db_path)
-    worker = jobs.Worker(data_dir, ffmpeg, inline=bool(cfg.get("JOBS_SYNC")))
-    if not cfg.get("JOBS_SYNC"):
+    testing = bool(cfg.get("JOBS_SYNC"))
+    state = {"v": 0}                                              # bumped whenever something a visitor can see may have changed
+    pages = {}                                                    # cached public pages: (path, gzip?) -> (version, stamp, etag, body)
+
+    def bump():
+        state["v"] += 1
+
+    worker = jobs.Worker(data_dir, db_path, ffmpeg, inline=testing, on_change=bump)
+    counts = Counts(db_path, inline=testing)
+    if not testing:
         worker.backfill()
+
+        def maintenance():
+            """Every few seconds write the batched counts; every minute move the write-ahead log into the database. Never on a visitor's time."""
+            tick = 0
+            while True:
+                time.sleep(5)
+                tick += 1
+                try:
+                    counts.flush()
+                    if tick % 12 == 0:
+                        db.checkpoint(db_path)
+                except Exception:
+                    app.logger.exception("maintenance failed")
+        threading.Thread(target=maintenance, daemon=True, name="musicshare-maintenance").start()
 
     auth = SiteAuth(app, name="musicshare", key_file=cfg.get("MUSICSHARE_SITE_KEY_FILE", "/etc/site-auth/keys/musicshare.key"),
                     cookie_path=base or "/", login_url=cfg.get("MUSICSHARE_SITE_LOGIN_URL", "/login"), clock=cfg.get("clock") or time.time,
@@ -82,15 +112,18 @@ def create_app(overrides=None):
     bp = Blueprint("music", __name__)
 
     def conn():
-        if "db" not in g:
-            g.db = db.connect(db_path)
-        return g.db
+        return db.thread_conn(db_path)
 
-    @app.teardown_appcontext
-    def close_db(_exc):
-        c = g.pop("db", None)
-        if c is not None:
-            c.close()
+    def timed(name):
+        """with timed("db"): ... adds to the Server-Timing header, so a slow page shows where the time went."""
+        class T:
+            def __enter__(self):
+                self.t = time.perf_counter()
+
+            def __exit__(self, *a):
+                g.setdefault("parts", {})
+                g.parts[name] = g.parts.get(name, 0) + (time.perf_counter() - self.t) * 1000
+        return T()
 
     @app.before_request
     def start_timer():
@@ -102,7 +135,10 @@ def create_app(overrides=None):
         told apart as "slow server/disk" or "slow network". Also gzip for the JSON and HTML answers (the track list carries waveforms)."""
         t0 = g.get("t0")
         if t0 is not None:
-            resp.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - t0) * 1000:.1f}"
+            parts = "".join(f"{k};dur={v:.1f}, " for k, v in g.get("parts", {}).items())
+            resp.headers["Server-Timing"] = f"{parts}app;dur={(time.perf_counter() - t0) * 1000:.1f}"
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and resp.status_code < 400:
+            bump()                                                  # a visitor-visible change may have happened: cached pages are stale
         if (resp.status_code == 200 and not resp.direct_passthrough and resp.mimetype in ("application/json", "text/html")
                 and "Content-Encoding" not in resp.headers and "gzip" in request.headers.get("Accept-Encoding", "")):
             body = resp.get_data()
@@ -166,30 +202,29 @@ def create_app(overrides=None):
             abort(404)
         return row
 
-    def count_open(table, row):
-        """Count a person opening a page. Not the owner, not a HEAD request, not a link-preview robot (a chat app fetches the page when you paste a link)."""
-        if auth.is_owner() or request.method != "GET" or ROBOT.search(request.headers.get("User-Agent", "")):
+    def is_robot():
+        return bool(ROBOT.search(request.headers.get("User-Agent", "")))
+
+    def count_open(table, token):
+        """Count a person opening a page. Not the owner, not a HEAD request, not a link-preview robot. Costs no disk access: see counts.py."""
+        if auth.is_owner() or request.method != "GET" or is_robot():
             return
-        now = db.now_iso()
-        conn().execute(f"UPDATE {table} SET open_count = open_count + 1, last_opened_at = ?, first_opened_at = COALESCE(first_opened_at, ?) WHERE id = ?", (now, now, row["id"]))
-        conn().commit()
+        counts.opened(table, token)
 
-    recent_plays = {}                      # (client, track id) -> when: one press of play can fetch the audio more than once
+    recent_plays = {}                      # (client, track) -> when: one press of play can fetch the audio more than once
 
-    def count_play(row):
+    def count_play(kind, value):
         """Count a listener starting a track: the audio is requested from its first byte. Seeking asks for later bytes and is not counted."""
         rng = request.headers.get("Range", "")
-        if auth.is_owner() or request.method != "GET" or ROBOT.search(request.headers.get("User-Agent", "")) or (rng and not rng.startswith("bytes=0-")):
+        if auth.is_owner() or request.method != "GET" or is_robot() or (rng and not rng.startswith("bytes=0-")):
             return
-        key, now = (request.remote_addr or "", request.headers.get("X-Forwarded-For", "").split(",")[-1].strip(), row["id"]), time.time()
+        key, now = (request.remote_addr or "", request.headers.get("X-Forwarded-For", "").split(",")[-1].strip(), kind, value), time.time()
         if now - recent_plays.get(key, 0) < 600:
             return
         if len(recent_plays) > 2000:
             recent_plays.clear()
         recent_plays[key] = now
-        stamp = db.now_iso()
-        conn().execute("UPDATE tracks SET play_count = play_count + 1, last_played_at = ? WHERE id = ?", (stamp, row["id"]))
-        conn().commit()
+        counts.played(kind, value)
 
     def fit(peaks, n):
         """At most n bars: the loudest of each group, so the shape stays and the page gets smaller."""
@@ -216,17 +251,30 @@ def create_app(overrides=None):
     # Static files: each is read once, compressed once, and kept in memory. Pages refer to them as /static/x.css?v=<hash of the content>,
     # which may be cached for a year (the address changes when the file does); a bare address is revalidated with its ETag.
     assets = {}
+    # A page needs several small CSS and JS files; each extra file is another connection and TLS handshake on a one-CPU server. These "bundles" are made
+    # by joining the real files in memory (nothing to build, nothing extra to keep in step), so a page loads one stylesheet and one script.
+    BUNDLES = {"bundle-public.css": ["minimal/minimal.css", "listen.css"], "bundle-studio.css": ["minimal/minimal.css", "listen.css", "musicshare.css"],
+               "bundle-public.js": ["wave/wave.js", "public.js"], "bundle-studio.js": ["minimal/theme-menu.js", "wave/wave.js", "studio.js"]}
 
     def load_asset(name):
-        path = (static_dir / name).resolve()
-        if name.startswith(".") or "/." in name or static_dir.resolve() not in path.parents or not path.is_file():
-            return None
-        st = path.stat()
+        parts = BUNDLES.get(name)
+        if parts:
+            files = [static_dir / x for x in parts]
+            if not all(f.is_file() for f in files):
+                return None
+            stamp = tuple((f.stat().st_mtime_ns, f.stat().st_size) for f in files)
+            path = None
+        else:
+            path = (static_dir / name).resolve()
+            if name.startswith(".") or "/." in name or static_dir.resolve() not in path.parents or not path.is_file():
+                return None
+            st = path.stat()
+            stamp = (st.st_mtime_ns, st.st_size)
         hit = assets.get(name)
-        if hit is None or hit["stamp"] != (st.st_mtime_ns, st.st_size):
-            raw = path.read_bytes()
+        if hit is None or hit["stamp"] != stamp:
+            raw = b"\n".join(f.read_bytes() for f in files) if parts else path.read_bytes()
             mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
-            hit = {"stamp": (st.st_mtime_ns, st.st_size), "raw": raw, "mime": mime, "etag": '"' + hashlib.sha1(raw).hexdigest()[:16] + '"',
+            hit = {"stamp": stamp, "raw": raw, "mime": mime, "etag": '"' + hashlib.sha1(raw).hexdigest()[:16] + '"',
                    "gz": gzip.compress(raw, 9) if mime in TEXT_TYPES and len(raw) > 600 else None}
             assets[name] = hit
         return hit
@@ -255,27 +303,60 @@ def create_app(overrides=None):
             resp.headers["Content-Encoding"] = "gzip"
         return resp
 
+    def cached(render):
+        """Visitors (not the owner) get a page kept in memory until something changes or five minutes pass: no database and no template work for
+        a repeat view, and a 304 (a few bytes) when their browser already has it."""
+        if auth.is_owner():
+            return Response(render(), mimetype="text/html")
+        gz_ok = "gzip" in request.headers.get("Accept-Encoding", "")
+        key, now = (request.path, gz_ok), time.time()
+        hit = pages.get(key)
+        if not (hit and hit[0] == state["v"] and now - hit[1] < 300):
+            version = state["v"]
+            html = render().encode()
+            zipped = gz_ok and len(html) > 1000
+            hit = (version, now, '"' + hashlib.sha1(html).hexdigest()[:16] + '"', gzip.compress(html, 6) if zipped else html, zipped)
+            if len(pages) > 500:
+                pages.clear()
+            pages[key] = hit
+        if request.headers.get("If-None-Match") == hit[2]:
+            return Response(status=304, headers={"ETag": hit[2], "Cache-Control": "private, no-cache"})
+        resp = Response(hit[3], mimetype="text/html")
+        resp.headers["ETag"] = hit[2]
+        if hit[4]:
+            resp.headers["Content-Encoding"] = "gzip"
+        resp.vary.add("Accept-Encoding")
+        return resp
+
     @bp.get("/")
     @auth.public
     def index():
-        tracks = conn().execute("SELECT * FROM tracks WHERE visibility = 'listed' AND archived_at IS NULL ORDER BY created_at DESC, id DESC").fetchall()
-        lists = conn().execute("SELECT * FROM playlists WHERE visibility = 'listed' AND archived_at IS NULL ORDER BY created_at DESC, id DESC").fetchall()
-        # `owner` only decides whether a quiet link to the Studio is shown; the page is otherwise the same for everyone
-        return render_template("index.html", base=base, owner=auth.is_owner(), tracks=[pub(t, 100) for t in tracks],
-                               playlists=[{"title": p["title"], "notes": p["notes"], "page": link("p", p["token"])} for p in lists])
+        def render():
+            with timed("db"):
+                tracks = conn().execute("SELECT * FROM tracks WHERE visibility = 'listed' AND archived_at IS NULL ORDER BY created_at DESC, id DESC").fetchall()
+                lists = conn().execute("SELECT * FROM playlists WHERE visibility = 'listed' AND archived_at IS NULL ORDER BY created_at DESC, id DESC").fetchall()
+            with timed("render"):
+                # `owner` only decides whether a quiet link to the Studio is shown; the page is otherwise the same for everyone
+                return render_template("index.html", base=base, owner=auth.is_owner(), tracks=[pub(t, 100) for t in tracks],
+                                       playlists=[{"title": p["title"], "notes": p["notes"], "page": link("p", p["token"])} for p in lists])
+        return cached(render)
 
     @bp.get("/t/<token>")
     @auth.public
     def track_page(token):
-        row = track_by_token(token)
-        count_open("tracks", row)
-        return render_template("track.html", base=base, t=pub(row), noindex=True)
+        def render():
+            row = track_by_token(token)
+            return render_template("track.html", base=base, t=pub(row), noindex=True)
+        resp = cached(render)
+        if resp.status_code == 200:
+            count_open("tracks", token)
+        return resp
 
     @bp.get("/a/<token>")
     @auth.public
     def track_audio(token):
         row = track_by_token(token)
-        count_play(row)
+        count_play("token", token)
         return serve_audio(row)
 
     def playlist_by_token(token):
@@ -287,17 +368,21 @@ def create_app(overrides=None):
     @bp.get("/p/<token>")
     @auth.public
     def playlist_page(token):
-        pl = playlist_by_token(token)
-        rows = conn().execute("SELECT t.* FROM playlist_items i JOIN tracks t ON t.id = i.track_id WHERE i.playlist_id = ? ORDER BY i.position", (pl["id"],)).fetchall()
-        count_open("playlists", pl)
-        items = []
-        for r in rows:
-            d = pub(r, 100)
-            d["audio"] = f"{base}/pa/{pl['token']}/{r['id']}"
-            d["download"] = f"{d['audio']}?download=1" if show_download else None        # never the track's own link: a playlist link must not reveal it
-            d["page"] = None
-            items.append(d)
-        return render_template("playlist.html", base=base, p={"title": pl["title"], "notes": pl["notes"]}, items=items, noindex=True)
+        def render():
+            pl = playlist_by_token(token)
+            rows = conn().execute("SELECT t.* FROM playlist_items i JOIN tracks t ON t.id = i.track_id WHERE i.playlist_id = ? ORDER BY i.position", (pl["id"],)).fetchall()
+            items = []
+            for r in rows:
+                d = pub(r, 100)
+                d["audio"] = f"{base}/pa/{pl['token']}/{r['id']}"
+                d["download"] = f"{d['audio']}?download=1" if show_download else None        # never the track's own link: a playlist link must not reveal it
+                d["page"] = None
+                items.append(d)
+            return render_template("playlist.html", base=base, p={"title": pl["title"], "notes": pl["notes"]}, items=items, noindex=True)
+        resp = cached(render)
+        if resp.status_code == 200:
+            count_open("playlists", token)
+        return resp
 
     @bp.get("/pa/<token>/<int:track_id>")
     @auth.public
@@ -306,7 +391,7 @@ def create_app(overrides=None):
         row = conn().execute("SELECT t.* FROM playlist_items i JOIN tracks t ON t.id = i.track_id WHERE i.playlist_id = ? AND t.id = ?", (pl["id"], track_id)).fetchone()
         if row is None:
             abort(404)
-        count_play(row)
+        count_play("id", track_id)
         return serve_audio(row)
 
     # ---- the owner's page ---------------------------------------------------------------------------------------
@@ -324,6 +409,7 @@ def create_app(overrides=None):
     @bp.get("/api/tracks")
     @auth.owner
     def list_tracks():
+        counts.flush()                                              # the Studio shows up-to-date "played" and "opened" numbers
         archived = request.args.get("archived") == "1"
         rows = conn().execute(f"SELECT * FROM tracks WHERE archived_at IS {'NOT ' if archived else ''}NULL ORDER BY created_at DESC, id DESC").fetchall()
         return jsonify([track_dict(r) for r in rows])
@@ -454,6 +540,7 @@ def create_app(overrides=None):
     @bp.get("/api/playlists")
     @auth.owner
     def list_playlists():
+        counts.flush()
         archived = request.args.get("archived") == "1"
         rows = conn().execute(f"SELECT * FROM playlists WHERE archived_at IS {'NOT ' if archived else ''}NULL ORDER BY created_at DESC, id DESC").fetchall()
         return jsonify([playlist_dict(r) for r in rows])
@@ -558,13 +645,70 @@ def create_app(overrides=None):
         return jsonify(enabled=bool(backup_dir), **(backupmod.status(backup_dir) if backup_dir else {}),
                        restore=backupmod.inspect(restore_dir) if Path(restore_dir).is_dir() else {"ok": False, "error": "no restore folder"})
 
+    def commit_ms(directory):
+        """How long a small durable write takes in `directory` (write 4 KB and wait until the disk has it): the delay behind every save."""
+        out = []
+        try:
+            for _ in range(5):
+                p = Path(directory) / (".speed-" + db.new_token())
+                t = time.perf_counter()
+                fd = os.open(p, os.O_WRONLY | os.O_CREAT, 0o600)
+                try:
+                    os.write(fd, b"x" * 4096)
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                out.append((time.perf_counter() - t) * 1000)
+                p.unlink()
+        except OSError:
+            return None
+        return round(statistics.median(out), 1)
+
+    @bp.get("/api/diagnostics")
+    @auth.owner
+    def diagnostics():
+        """A speed check you can run from the Studio: is it the disk, the CPU, or neither? Writes and deletes a few 4 KB test files; changes nothing else."""
+        data_ms = commit_ms(data_dir / "tmp")
+        boot_ms = commit_ms(cfg.get("MUSICSHARE_BOOT_TMP", "/var/tmp"))
+        t = time.perf_counter()
+        c = db.connect(db_path)                                       # a fresh connection: the cold path a first visit takes
+        try:
+            n = c.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+            c.execute("SELECT * FROM tracks ORDER BY created_at DESC LIMIT 50").fetchall()
+        finally:
+            c.close()
+        read_ms = round((time.perf_counter() - t) * 1000, 1)
+        try:
+            load = [round(x, 2) for x in os.getloadavg()]
+        except OSError:
+            load = None
+        try:
+            swap = subprocess.run(["swapctl", "-s"], capture_output=True, text=True, timeout=2).stdout.strip() or None
+        except (OSError, subprocess.SubprocessError):
+            swap = None
+        cpus = os.cpu_count() or 1
+        advice = []
+        if data_ms is not None and data_ms > 150:
+            advice.append(f"Saving to the data volume takes {data_ms} ms" + (f" (the boot disk: {boot_ms} ms)" if boot_ms is not None else "") +
+                          ". That is the wait you feel when you change a track. Set MUSICSHARE_DB_DIR to a folder on the boot disk to move just the small database there; the audio stays on the volume.")
+        if load and load[0] > cpus * 1.5:
+            advice.append(f"The server is busy (load {load[0]} on {cpus} CPU). Something is using the processor: a track being measured, or another service.")
+        if worker.pending():
+            advice.append(f"{worker.pending()} track(s) are still being measured in the background; that uses the CPU and the disk until it finishes.")
+        if read_ms > 300:
+            advice.append(f"A cold read of the database took {read_ms} ms: the disk is slow to read as well.")
+        if not advice:
+            advice.append("Nothing looks slow on the server. If pages still load slowly, the time is going on the network or in relayd; open the browser's developer tools, Network tab, and compare the Server-Timing line with the total time.")
+        return jsonify(commit_data_volume_ms=data_ms, commit_boot_disk_ms=boot_ms, database_read_ms=read_ms, tracks=n, load=load, cpus=cpus, swap=swap,
+                       jobs_pending=worker.pending(), counts_pending=counts.pending(), database_dir=str(db_dir), advice=advice)
+
     @bp.post("/api/backup")
     @auth.owner
     def backup_now():
         if not backup_dir:
             return err("no backup folder is set (MUSICSHARE_BACKUP_DIR)", 409)
         try:
-            target, copied, problems = backupmod.backup(data_dir, backup_dir)
+            target, copied, problems = backupmod.backup(data_dir, backup_dir, db_file=db_path)
         except (ValueError, OSError, sqlite3.Error) as exc:
             return err(str(exc), 500)
         return jsonify(ok=True, copy=target.name, audio_copied=copied, problems=problems)
@@ -573,10 +717,11 @@ def create_app(overrides=None):
     @auth.owner
     def restore_now():
         try:
-            n, problems = backupmod.restore(restore_dir, data_dir)
+            n, problems = backupmod.restore(restore_dir, data_dir, db_file=db_path)
         except (ValueError, OSError, sqlite3.Error) as exc:
             return err(str(exc), 409)
         db.init(db_path)                                   # a backup made by an older version gets the new columns
+        bump()
         worker.backfill()
         return jsonify(ok=True, tracks=n, problems=problems)
 

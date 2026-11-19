@@ -23,17 +23,41 @@
   const day = (iso) => (iso || "").slice(0, 10);
   const login = () => { location.href = "/login?next=" + encodeURIComponent(location.pathname); };
 
+  // The thin bar at the top of the page: shown while anything is waiting on the server (after a short pause, so quick actions do not flicker).
+  let waiting = 0, barTimer = null;
+  function busy(delta) {
+    waiting += delta;
+    const bar = $("#net");
+    if (waiting > 0 && !barTimer) barTimer = setTimeout(() => { bar.hidden = false; document.body.setAttribute("aria-busy", "true"); }, 150);
+    if (waiting <= 0) { waiting = 0; clearTimeout(barTimer); barTimer = null; bar.hidden = true; document.body.removeAttribute("aria-busy"); }
+  }
   async function api(path, opts) {
-    const r = await fetch("api/" + path, { credentials: "same-origin", ...opts });
-    if (r.status === 401) { login(); throw new Error("signed out"); }
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || "error " + r.status);
-    return data;
+    busy(1);
+    try {
+      const r = await fetch("api/" + path, { credentials: "same-origin", ...opts });
+      if (r.status === 401) { login(); throw new Error("signed out"); }
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || "error " + r.status);
+      return data;
+    } finally { busy(-1); }
   }
   const send = (path, method, body) => api(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
   async function run(fn) { try { notice(""); await fn(); } catch (e) { if (e.message !== "signed out") notice(e.message); } }
   // a button that does something, then reloads the list
-  const act = (label, fn, cls) => h("button", { type: "button", class: cls || false, onclick: () => run(async () => { await fn(); }) }, label);
+  // The moment you click: the button says "Working…" and is disabled, and its row dims, until the server answers.
+  function act(label, fn, cls) {
+    const b = h("button", { type: "button", class: cls || false }, label);
+    b.addEventListener("click", async () => {
+      if (b.disabled) return;
+      const row = b.closest(".item");
+      b.disabled = true; b.textContent = "Working…"; if (row) row.classList.add("pending");
+      await run(fn);
+      if (b.isConnected) { b.disabled = false; b.textContent = label; if (row) row.classList.remove("pending"); }
+    });
+    return b;
+  }
+  const replaceTrack = (upd) => { tracks = tracks.map((x) => (x.id === upd.id ? upd : x)); render(); };
+  const removeTrack = (id) => { tracks = tracks.filter((x) => x.id !== id); render(); };
   const copyLink = (path) => async () => { await navigator.clipboard.writeText(full(path)); notice("Link copied."); };
   const confirmed = (text, fn) => async () => { if (confirm(text)) await fn(); };
   const typed = (text, title, fn) => async () => { const t = prompt(text + "\n\n" + title); if (t != null) await fn(t); };
@@ -56,14 +80,22 @@
   for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => { tab = b.dataset.tab; markTabs(); run(() => load(true)); });
 
   // ---- playing in the Studio ---------------------------------------------------------------------------------------
-  function paintPlay() { for (const b of document.querySelectorAll(".play[data-id]")) b.dataset.state = Number(b.dataset.id) === playing && !audio.paused ? "pause" : "play"; }
+  let loading = false;
+  function paintPlay() {
+    for (const b of document.querySelectorAll(".play[data-id]")) {
+      const mine = Number(b.dataset.id) === playing;
+      b.dataset.state = mine && loading ? "loading" : mine && !audio.paused ? "pause" : "play";
+    }
+  }
   function play(t, at) {
     if (playing !== t.id) { playing = t.id; audio.src = t.audio; if (at) audio.addEventListener("loadedmetadata", () => { audio.currentTime = at; }, { once: true }); }
     else if (at != null) audio.currentTime = at;
-    audio.play().catch(() => {});
+    loading = true; paintPlay();
+    audio.play().catch(() => { loading = false; paintPlay(); });
   }
+  for (const ev of ["waiting", "loadstart"]) audio.addEventListener(ev, () => { loading = !audio.paused || ev === "loadstart"; paintPlay(); });
+  for (const ev of ["playing", "canplay", "error", "pause"]) audio.addEventListener(ev, () => { loading = false; paintPlay(); });
   audio.addEventListener("timeupdate", () => { const w = waves.get(playing); if (w) w.set({ time: audio.currentTime, duration: audio.duration || 0 }); });
-  audio.addEventListener("play", paintPlay); audio.addEventListener("pause", paintPlay);
 
   // a waveform is drawn only when its row is near the screen
   const seen = "IntersectionObserver" in window ? new IntersectionObserver((entries) => {
@@ -88,9 +120,9 @@
         act("Copy link", copyLink(t.link)),
         h("a", { class: "btn", href: t.link, target: "_blank", rel: "noopener" }, "Open"),
         h("button", { type: "button", onclick: () => edit(t, row) }, "Edit"),
-        act(t.archived ? "Unarchive" : "Archive", async () => { await send(`tracks/${t.id}/${t.archived ? "unarchive" : "archive"}`, "POST"); await reload(); }),
-        act("New link", confirmed("Make a new link? The old link will stop working.", async () => { await send(`tracks/${t.id}/new-link`, "POST"); await reload(); })),
-        act("Delete forever", typed("This deletes the audio forever. Type the exact title to confirm:", t.title, async (v) => { await send(`tracks/${t.id}`, "DELETE", { confirm: v }); await reload(); }))));
+        act(t.archived ? "Unarchive" : "Archive", async () => { await send(`tracks/${t.id}/${t.archived ? "unarchive" : "archive"}`, "POST"); removeTrack(t.id); }),
+        act("New link", confirmed("Make a new link? The old link will stop working.", async () => replaceTrack(await send(`tracks/${t.id}/new-link`, "POST")))),
+        act("Delete forever", typed("This deletes the audio forever. Type the exact title to confirm:", t.title, async (v) => { await send(`tracks/${t.id}`, "DELETE", { confirm: v }); removeTrack(t.id); }))));
     lazyWave(canvas, () => {
       const n = Math.max(24, Math.floor(canvas.clientWidth / 4));
       waves.set(t.id, window.Wave.attach(canvas, { peaks: fit(t.peaks, n), duration: t.duration_s || 0, onSeek: (s) => play(t, s) }));
@@ -104,8 +136,8 @@
     const vis = h("select", { "aria-label": "Visibility" }, h("option", { value: "unlisted" }, "Unlisted: only people with the link"), h("option", { value: "listed" }, "Listed: also on the public page"));
     vis.value = t.visibility;
     row.insertBefore(h("div", { class: "edit" }, title, notes, vis, h("div", { class: "actions" },
-      act("Save", async () => { await send(`tracks/${t.id}`, "PATCH", { title: title.value, notes: notes.value, visibility: vis.value }); await reload(); }, "primary"),
-      act("Cancel", reload))), $(".actions", row));
+      act("Save", async () => replaceTrack(await send(`tracks/${t.id}`, "PATCH", { title: title.value, notes: notes.value, visibility: vis.value })), "primary"),
+      act("Cancel", async () => render()))), $(".actions", row));
   }
 
   // ---- uploading, with a progress bar -----------------------------------------------------------------------------
@@ -184,6 +216,24 @@
         act("Restore from this folder", async () => { const r = await send("restore", "POST"); notice("Restored " + r.tracks + " track(s)." + problems(r)); tab = "tracks"; await load(true); })) : null);
   }
 
+  function speedPanel() {
+    const out = h("div", { class: "speed" });
+    const show = (d) => {
+      out.textContent = "";
+      const row = (k, v) => out.append(h("div", { class: "track-meta" }, k + ": " + v));
+      row("Saving to the data volume", d.commit_data_volume_ms == null ? "could not test" : d.commit_data_volume_ms + " ms");
+      row("Saving to the boot disk", d.commit_boot_disk_ms == null ? "could not test" : d.commit_boot_disk_ms + " ms");
+      row("Reading the database (cold)", d.database_read_ms + " ms");
+      row("Server load (1, 5, 15 min)", d.load ? d.load.join(", ") + " on " + d.cpus + " CPU" : "unknown");
+      if (d.swap) row("Swap", d.swap);
+      row("Tracks being measured", String(d.jobs_pending));
+      for (const a of d.advice) out.append(h("p", { class: "notice" }, a));
+    };
+    return h("div", null, h("h2", { class: "section" }, "Speed check"),
+      h("p", { class: "muted small" }, "Times a small save on each disk, a database read, and the server load, and says what looks slow. It writes and deletes a few tiny test files and changes nothing else."),
+      act("Run speed check", async () => show(await api("diagnostics"))), out);
+  }
+
   function render() {
     markTabs();
     const main = $("#main"); main.textContent = ""; waves.clear(); main.removeAttribute("aria-busy");
@@ -195,7 +245,7 @@
       main.append(act("New playlist", async () => { const title = prompt("Playlist title"); if (!title) return; await send("playlists", "POST", { title }); await reload(); }, "primary"));
       if (!playlists.length) main.append(h("p", { class: "empty" }, "No playlists yet."));
       for (const p of playlists) main.append(playlistCard(p));
-    } else main.append(backupPanel());
+    } else main.append(backupPanel(), speedPanel());
     paintPlay();
   }
 

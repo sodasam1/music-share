@@ -9,7 +9,7 @@
   const audio = new Audio();
   audio.preload = "none";
   const playlist = !!document.querySelector("[data-playlist]");
-  let current = null;
+  let current = null, loading = false;
   const fmt = (s) => (isFinite(s) && s >= 0 ? Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0") : "0:00");
   const titleOf = (it) => it.querySelector(".title").textContent;
   // fewer, chunkier bars on a narrow screen: the loudest of each group, so the shape stays
@@ -20,10 +20,10 @@
     for (const it of items) {
       const on = it === current && playing, btn = it.querySelector(".play");
       it.classList.toggle("playing", it === current);
-      btn.dataset.state = on ? "pause" : "play";
+      btn.dataset.state = it === current && loading ? "loading" : on ? "pause" : "play";
       btn.setAttribute("aria-label", (on ? "Pause " : "Play ") + titleOf(it));
     }
-    barPlay.dataset.state = playing ? "pause" : "play";
+    barPlay.dataset.state = loading ? "loading" : playing ? "pause" : "play";
     barPlay.setAttribute("aria-label", playing ? "Pause" : "Play");
   }
   function start(it, at) {
@@ -34,7 +34,8 @@
       bar.hidden = false;
       if (at) audio.addEventListener("loadedmetadata", () => { audio.currentTime = at; }, { once: true });
     } else if (at != null) audio.currentTime = at;
-    audio.play().catch(() => { /* the browser refused (no tap yet): the next tap works */ });
+    loading = true;                                                  // the tap was heard: show a spinner until the sound starts
+    audio.play().catch(() => { loading = false; paint(); /* the browser refused (no tap yet): the next tap works */ });
     paint();
   }
   const toggle = (it) => { if (current === it && !audio.paused) audio.pause(); else start(it); };
@@ -61,7 +62,8 @@
     barProg.setAttribute("aria-valuenow", String(d ? Math.round((t / d) * 100) : 0));
     barTime.textContent = fmt(t) + " / " + fmt(d);
   });
-  audio.addEventListener("pause", paint);
+  for (const ev of ["playing", "canplay", "error", "pause"]) audio.addEventListener(ev, () => { loading = false; paint(); });
+  audio.addEventListener("waiting", () => { loading = true; paint(); });
   audio.addEventListener("play", paint);
   audio.addEventListener("ended", () => {
     const i = items.indexOf(current);
