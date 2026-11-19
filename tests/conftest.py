@@ -38,14 +38,14 @@ def site(tmp_path):
     d = tmp_path / "site-auth"
     run = lambda *a: subprocess.run([sys.executable, str(ROOT / "app" / "siteauth" / "keys.py"), *a, "--no-chown"], check=True, capture_output=True)   # noqa: E731
     run("init", "--dir", str(d))
-    run("ensure-app", "--dir", str(d), "--app", "musicshare", "--path", "/music")
+    run("ensure-app", "--dir", str(d), "--app", "musicshare", "--path", "/music-share")
     run("ensure-app", "--dir", str(d), "--app", "riffbox", "--path", "/ideas")
     return d
 
 
 @pytest.fixture
 def app(tmp_path, site):
-    return create_app({"TESTING": True, "JOBS_SYNC": True, "MUSICSHARE_DATA_DIR": str(tmp_path / "data"), "MUSICSHARE_BASE_PATH": "/music",
+    return create_app({"TESTING": True, "JOBS_SYNC": True, "MUSICSHARE_DATA_DIR": str(tmp_path / "data"), "MUSICSHARE_BASE_PATH": "/music-share",
                        "MUSICSHARE_STATIC_DIR": str(ROOT / "static"), "MUSICSHARE_SITE_KEY_FILE": str(site / "keys" / "musicshare.key"),
                        "MUSICSHARE_INSECURE_COOKIES": "1", "MUSICSHARE_BACKUP_DIR": str(tmp_path / "backup"),
                        "MUSICSHARE_RESTORE_DIR": str(tmp_path / "restore"), "clock": Wall()})
@@ -69,5 +69,5 @@ def guest(app):
 
 
 def upload(client, name="Demo one.wav", data=None, visibility="unlisted", seed=0):
-    return client.post("/music/api/tracks", data={"files": (io.BytesIO(data or wav_bytes(seed=seed)), name), "visibility": visibility},
+    return client.post("/music-share/api/tracks", data={"files": (io.BytesIO(data or wav_bytes(seed=seed)), name), "visibility": visibility},
                        content_type="multipart/form-data")

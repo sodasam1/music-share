@@ -9,7 +9,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ms-e2e-"));
 const auth = path.join(tmp, "site-auth"), data = path.join(tmp, "data");
 const keys = path.join(ROOT, "app", "siteauth", "keys.py");
 execFileSync(PY, [keys, "init", "--dir", auth, "--no-chown"]);
-execFileSync(PY, [keys, "ensure-app", "--dir", auth, "--app", "musicshare", "--path", "/music", "--no-chown"]);
+execFileSync(PY, [keys, "ensure-app", "--dir", auth, "--app", "musicshare", "--path", "/music-share", "--no-chown"]);
 const cookie = execFileSync(PY, ["-c", `
 import importlib.util as u, time
 sp = u.spec_from_file_location("k", "${keys}"); k = u.module_from_spec(sp); sp.loader.exec_module(k)
@@ -18,9 +18,9 @@ from siteauth import make_token
 print(make_token(k.derive(open("${auth}/master").read().strip(), "musicshare", 1), time.time()))`]).toString().trim();
 for (const [i, hz] of [[1, 330], [2, 440]]) execFileSync("ffmpeg", ["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", `sine=frequency=${hz}:duration=3`, path.join(tmp, `Tone ${i}.wav`)]);
 const server = spawn(PY, ["-m", "waitress", `--listen=127.0.0.1:${PORT}`, "wsgi:app"], { cwd: path.join(ROOT, "app"), stdio: "inherit", env: { ...process.env,
-  MUSICSHARE_DATA_DIR: data, MUSICSHARE_BASE_PATH: "/music", MUSICSHARE_STATIC_DIR: path.join(ROOT, "static"), MUSICSHARE_SITE_KEY_FILE: path.join(auth, "keys", "musicshare.key"),
+  MUSICSHARE_DATA_DIR: data, MUSICSHARE_BASE_PATH: "/music-share", MUSICSHARE_STATIC_DIR: path.join(ROOT, "static"), MUSICSHARE_SITE_KEY_FILE: path.join(auth, "keys", "musicshare.key"),
   MUSICSHARE_INSECURE_COOKIES: "1", MUSICSHARE_CONFIG: "/nonexistent" } });
-const B = `http://127.0.0.1:${PORT}/music/`;
+const B = `http://127.0.0.1:${PORT}/music-share/`;
 const step = (m) => console.log("ok  " + m);
 (async () => {
   for (let i = 0; i < 80; i++) { try { if ((await fetch(B + "health")).ok) break; } catch (e) {} await new Promise((r) => setTimeout(r, 100)); }

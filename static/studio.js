@@ -31,18 +31,27 @@
   const send = (path, method, body) => api(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
   async function run(fn) { try { notice(""); await fn(); } catch (e) { if (e.message !== "signed out") notice(e.message); } }
 
-  async function load() {
-    tracks = await api("tracks" + (tab === "archive" ? "?archived=1" : ""));
-    playlists = await api("playlists" + (tab === "playlists-archive" ? "?archived=1" : ""));
-    if (tab === "backup") backup = await api("backup");
+  // Show grey placeholders where the rows will be, so the page has its shape before the data arrives.
+  function showSkeleton() {
+    const main = $("#main"); main.textContent = ""; waves.clear();
+    main.setAttribute("aria-busy", "true");
+    for (let i = 0; i < 3; i++) main.append(h("div", { class: "skeleton", "aria-hidden": "true" }, h("div", { class: "sk-line" }), h("div", { class: "sk-wave" })));
+  }
+  // Fetch only what the current tab shows (all of it at once), then draw. `fresh` = first load or a tab change: show placeholders meanwhile.
+  // After an action (edit, archive...) the old rows stay on screen until the new ones are ready, so nothing flashes.
+  async function load(fresh) {
+    const want = tab;
+    if (fresh) showSkeleton();
+    if (tab === "tracks" || tab === "archive") tracks = await api("tracks" + (tab === "archive" ? "?archived=1" : ""));
+    else if (tab === "playlists") { [playlists, allTracks] = await Promise.all([api("playlists"), api("tracks")]); tracks = allTracks; }
+    else backup = await api("backup");
+    if (want !== tab) return;                  // you switched tabs while this was loading: the newer load draws
     render();
   }
 
-  function renderTabs() {
-    const names = [["tracks", "Tracks"], ["archive", "Archive"], ["playlists", "Playlists"], ["backup", "Backup"]];
-    const nav = $("#tabs"); nav.textContent = "";
-    for (const [k, label] of names) nav.append(h("button", { type: "button", "aria-pressed": String(tab === k), onclick: () => { tab = k; run(load); } }, label));
-  }
+  // The tab buttons are in studio.html, so they are on screen before this script runs. Here they only get their clicks.
+  function markTabs() { for (const b of document.querySelectorAll("#tabs button")) b.setAttribute("aria-pressed", String(b.dataset.tab === tab)); }
+  for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => { tab = b.dataset.tab; markTabs(); run(() => load(true)); });
 
   function play(t, at) {
     if (playing !== t.id) { playing = t.id; audio.src = t.audio; if (at) audio.addEventListener("loadedmetadata", () => { audio.currentTime = at; }, { once: true }); }
@@ -50,6 +59,12 @@
     audio.play().catch(() => {});
   }
   audio.addEventListener("timeupdate", () => { const w = waves.get(playing); if (w) w.set({ time: audio.currentTime, duration: audio.duration || 0 }); });
+
+  // A waveform is drawn only when its row is near the screen (a long list does not pay for rows far below).
+  const seen = "IntersectionObserver" in window ? new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { seen.unobserve(e.target); const f = e.target._draw; if (f) { e.target._draw = null; f(); } }
+  }, { rootMargin: "400px" }) : null;
+  function lazyWave(canvas, draw) { if (!seen) { draw(); return; } canvas._draw = draw; seen.observe(canvas); }
 
   function trackRow(t) {
     const canvas = h("canvas", { class: "wave" });
@@ -71,7 +86,7 @@
         h("button", { type: "button", onclick: () => run(async () => { if (!confirm("Make a new link? The old link will stop working.")) return; await send(`tracks/${t.id}/new-link`, "POST"); await load(); }) }, "New link"),
         h("button", { type: "button", onclick: () => run(async () => { const typed = prompt("This deletes the audio forever. Type the exact title to confirm:\n\n" + t.title); if (typed == null) return; await send(`tracks/${t.id}`, "DELETE", { confirm: typed }); await load(); }) }, "Delete forever")));
     if (t.notes) row.insertBefore(h("p", { class: "muted notes" }, t.notes), $(".actions", row));
-    setTimeout(() => waves.set(t.id, window.Wave.attach(canvas, { peaks: t.peaks, duration: t.duration_s || 0, onSeek: (s) => play(t, s) })), 0);
+    lazyWave(canvas, () => waves.set(t.id, window.Wave.attach(canvas, { peaks: t.peaks, duration: t.duration_s || 0, onSeek: (s) => play(t, s) })));
     return row;
   }
 
@@ -162,8 +177,8 @@
   }
 
   function render() {
-    renderTabs();
-    const main = $("#main"); main.textContent = ""; waves.clear();
+    markTabs();
+    const main = $("#main"); main.textContent = ""; waves.clear(); main.removeAttribute("aria-busy");
     if (tab === "tracks" || tab === "archive") {
       if (tab === "tracks") main.append(uploadBox());
       if (!tracks.length) main.append(h("p", { class: "muted" }, tab === "tracks" ? "No tracks yet. Drop a file above." : "Nothing archived."));
@@ -175,11 +190,5 @@
     } else main.append(backupPanel());
   }
 
-  run(async () => {
-    allTracks = await api("tracks");
-    await load();
-  });
-  // keep the full track list fresh for the playlist picker whenever tabs change
-  const origLoad = load;
-  load = async function () { allTracks = await api("tracks"); await origLoad(); };       // eslint-disable-line no-func-assign
+  run(() => load(true));
 })();
