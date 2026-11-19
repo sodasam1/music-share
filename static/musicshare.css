@@ -1,34 +1,37 @@
-/* music-share's own few rules, on top of minimal.css */
-.item { margin: 0 0 1.4rem; }
-.item .row { border-bottom: 0; padding-bottom: .3rem; }
-.item.playing .title { box-shadow: inset 0 -2px 0 var(--accent); }
+/* the Studio's own rules (the shared look is listen.css) */
 .small { font-size: .85rem; }
-.notes { white-space: pre-wrap; margin: .3rem 0; overflow-wrap: anywhere; }
-.time { font-variant-numeric: tabular-nums; }
-.studio .row .grow { min-width: 0; }
-.studio .actions { display: flex; gap: 10px; flex-wrap: wrap; margin: .2rem 0 .6rem; }
-.studio .actions button { min-height: 30px; padding: .2rem .6rem; }
-.studio .drop { border: 2px dashed var(--line); border-radius: var(--r); padding: 1.2rem; text-align: center; color: var(--muted); margin: 1rem 0; }
-.studio .drop.over { border-color: var(--accent); color: var(--text); }
-.studio nav.tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); margin-bottom: 1rem; }
-.studio nav.tabs button { border: 0; border-radius: 0; padding: .4rem 0; color: var(--muted); }
+.notes { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0; }
+.studio .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: .9rem 0 .2rem; }
+.studio .actions button, .studio .actions .btn { min-height: 30px; padding: .2rem .65rem; font-size: .88rem; }
+.studio .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 1.6rem 1rem; text-align: center; color: var(--muted); margin: 0 0 1.8rem; cursor: pointer; }
+.studio .drop:hover, .studio .drop.over { border-color: var(--accent); color: var(--text); }
+.studio .drop select { margin-left: .4rem; }
+.studio progress { width: 100%; height: 6px; accent-color: var(--accent); margin: .4rem 0 1rem; }
+.studio nav.tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--line); margin-bottom: 1.4rem; }
+.studio nav.tabs button { border: 0; border-radius: 0; padding: .45rem 0; color: var(--muted); }
 .studio nav.tabs button[aria-pressed="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
-.studio .edit { display: grid; gap: .4rem; margin: .5rem 0; }
-.studio .pl-items { list-style: none; margin: .4rem 0; padding: 0; }
-.studio .pl-items li { display: flex; gap: 8px; align-items: center; padding: .2rem 0; border-bottom: 1px solid var(--line); }
+.studio .edit { display: grid; gap: .5rem; margin: .8rem 0; }
+.studio .pl-items { list-style: none; margin: .6rem 0; padding: 0; }
+.studio .pl-items li { display: flex; gap: 8px; align-items: center; padding: .3rem 0; border-bottom: 1px solid var(--line); }
 .studio .pl-items li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .studio select { width: auto; max-width: 100%; border: 1px solid var(--line); padding: .3rem; background: var(--bg); color: var(--text); }
-.pill-note { color: var(--warn); }
-
-.owner-link { margin-top: 3rem; text-align: right; }
-.owner-link a { color: var(--muted); }
-
 /* placeholders shown while the Studio's data loads: the page has its shape at once */
-.skeleton { margin: 0 0 1.4rem; }
-.skeleton .sk-line { height: 1.1rem; width: 55%; background: var(--panel); border-radius: var(--r); margin: .7rem 0; }
-.skeleton .sk-wave { height: 64px; background: var(--panel); border-radius: var(--r); }
+.skeleton { margin: 0 0 1.7rem; }
+.skeleton .sk-line { height: 1.1rem; width: 55%; background: var(--panel); border-radius: 4px; margin: .7rem 0; }
+.skeleton .sk-wave { height: 72px; background: var(--panel); border-radius: 4px; }
 @media (prefers-reduced-motion: no-preference) {
   .skeleton .sk-line, .skeleton .sk-wave { animation: sk-pulse 1.4s ease-in-out infinite; }
   @keyframes sk-pulse { 50% { opacity: .55; } }
 }
 canvas.wave { background: linear-gradient(var(--line), var(--line)) center / 100% 2px no-repeat; }   /* a flat line until the waveform is drawn */
+
+/* "I heard you": a thin bar at the top while the server is working, dimmed rows and "Working…" buttons for the thing you clicked */
+.net { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 20; overflow: hidden; background: transparent; }
+.net[hidden] { display: none; }
+.net::before { content: ""; position: absolute; inset: 0; width: 40%; background: var(--accent); animation: net-slide 1.1s ease-in-out infinite; }
+@keyframes net-slide { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+.item.pending { opacity: .55; }
+.item.pending .actions button { pointer-events: none; }
+button.working { cursor: progress; }
+@media (prefers-reduced-motion: reduce) { .net::before { animation: none; width: 100%; opacity: .5; } }
+.speed .track-meta { font-size: .9rem; }

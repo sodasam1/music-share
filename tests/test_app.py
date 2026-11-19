@@ -328,15 +328,15 @@ def test_studio_link_is_shown_only_to_the_owner(owner, guest):
 
 
 def test_owner_empty_state_points_at_the_studio(owner, guest):
-    assert "in the Studio" in owner.get("/music-share/").get_data(as_text=True)
-    assert "in the Studio" not in guest.get("/music-share/").get_data(as_text=True)
+    assert "Upload tracks" in owner.get("/music-share/").get_data(as_text=True)
+    assert "Upload tracks" not in guest.get("/music-share/").get_data(as_text=True)
 
 
 # ---- speed: timing header and compression ------------------------------------------------------------------------------------------
 def test_server_timing_header_on_answers(owner, guest):
     for client, url in ((owner, "/music-share/api/tracks"), (guest, "/music-share/"), (guest, "/music-share/health")):
         h = client.get(url).headers.get("Server-Timing", "")
-        assert h.startswith("app;dur=") and float(h.split("=")[1]) >= 0
+        assert "app;dur=" in h and float(h.rsplit("app;dur=", 1)[1]) >= 0
 
 
 def test_big_json_and_html_are_gzipped_when_asked_and_plain_otherwise(owner, guest):
@@ -363,3 +363,247 @@ def test_studio_page_carries_its_menu_and_placeholders_in_the_html(owner):
     for name in ("Tracks", "Archive", "Playlists", "Backup"):
         assert f">{name}</button>" in html
     assert html.count('class="skeleton"') == 3 and 'id="tabs"' in html
+
+
+# ---- listeners are counted, robots are not ------------------------------------------------------------------------------------------
+ROBOT_UA = {"User-Agent": "Mozilla/5.0 (compatible; Slackbot-LinkExpanding 1.0)"}
+PERSON = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Safari/604.1"}
+
+
+def stats(owner):
+    row = owner.get("/music-share/api/tracks").json[0]
+    return row["open_count"], row["play_count"]
+
+
+def test_link_preview_robots_and_head_requests_are_not_counted_as_opens(owner, guest):
+    t = make(owner)
+    guest.get(f"/music-share/t/{t['token']}", headers=ROBOT_UA)
+    guest.head(f"/music-share/t/{t['token']}", headers=PERSON)
+    guest.get(f"/music-share/t/{t['token']}", headers={"User-Agent": "WhatsApp/2.23"})
+    assert stats(owner) == (0, 0)
+    guest.get(f"/music-share/t/{t['token']}", headers=PERSON)
+    assert stats(owner) == (1, 0)
+
+
+def test_a_play_is_counted_when_the_audio_starts_from_the_beginning_once_per_listener(owner, guest, app):
+    t = make(owner)
+    guest.get(f"/music-share/a/{t['token']}", headers={**PERSON, "Range": "bytes=0-"})
+    guest.get(f"/music-share/a/{t['token']}", headers={**PERSON, "Range": "bytes=0-"})            # the browser asking again: the same play
+    assert stats(owner)[1] == 1
+    guest.get(f"/music-share/a/{t['token']}", headers={**PERSON, "Range": "bytes=5000-"})          # seeking is not a new play
+    assert stats(owner)[1] == 1
+    other = app.test_client()
+    other.get(f"/music-share/a/{t['token']}", headers={**PERSON, "X-Forwarded-For": "8.8.8.8"}, environ_base={"REMOTE_ADDR": "127.0.0.1"})
+    assert stats(owner)[1] == 2                                                                      # a different listener
+    guest.get(f"/music-share/a/{t['token']}", headers={**ROBOT_UA})
+    owner.get(f"/music-share/a/{t['token']}")
+    assert stats(owner)[1] == 2                                                                      # robots and the owner never count
+    row = owner.get("/music-share/api/tracks").json[0]
+    assert row["last_played_at"]
+
+
+def test_plays_through_a_playlist_count_for_the_track(owner, guest):
+    t = make(owner)
+    pl = owner.post("/music-share/api/playlists", json={"title": "x"}).json
+    owner.put(f"/music-share/api/playlists/{pl['id']}/items", json={"track_ids": [t["id"]]})
+    guest.get(f"/music-share/pa/{pl['token']}/{t['id']}", headers={**PERSON, "Range": "bytes=0-"})
+    assert stats(owner)[1] == 1
+
+
+def test_owner_can_always_download_the_original_even_when_the_link_download_is_off(tmp_path, site):
+    from conftest import Wall, owner_cookie
+    from musicshare import create_app
+    app = create_app({"TESTING": True, "JOBS_SYNC": True, "MUSICSHARE_DATA_DIR": str(tmp_path / "d"), "MUSICSHARE_BASE_PATH": "/music-share",
+                      "MUSICSHARE_STATIC_DIR": str(__import__("conftest").ROOT / "static"), "MUSICSHARE_SITE_KEY_FILE": str(site / "keys" / "musicshare.key"),
+                      "MUSICSHARE_INSECURE_COOKIES": "1", "MUSICSHARE_SHOW_DOWNLOAD": "0", "clock": Wall()})
+    o = app.test_client(); o.set_cookie("site_musicshare", owner_cookie(site))
+    t = upload(o).json["tracks"][0]
+    assert "attachment" in o.get(f"/music-share/api/audio/{t['id']}?download=1").headers["Content-Disposition"]
+    g = app.test_client()
+    assert "attachment" not in g.get(f"/music-share/a/{t['token']}?download=1").headers.get("Content-Disposition", "")
+    assert "Download" not in g.get(f"/music-share/t/{t['token']}").get_data(as_text=True)
+
+
+# ---- speed: assets are cached for a year by content, compressed once --------------------------------------------------------------------
+def test_pages_refer_to_versioned_assets_that_cache_for_a_year(guest):
+    import re
+    page = guest.get("/music-share/").get_data(as_text=True)
+    urls = re.findall(r'(?:href|src)="(/music-share/static/[^"]+\?v=[0-9a-f]{8})"', page)
+    assert len(urls) >= 3
+    r = guest.get(urls[0])
+    assert r.status_code == 200 and "immutable" in r.headers["Cache-Control"] and "max-age=31536000" in r.headers["Cache-Control"]
+    assert guest.get("/music-share/static/listen.css").headers["Cache-Control"] == "no-cache"             # a bare address is always revalidated
+
+
+def test_static_text_files_are_gzipped_and_support_304(guest):
+    import gzip as gz
+    plain = guest.get("/music-share/static/listen.css")
+    zipped = guest.get("/music-share/static/listen.css", headers={"Accept-Encoding": "gzip"})
+    assert zipped.headers["Content-Encoding"] == "gzip" and gz.decompress(zipped.data) == plain.data and len(zipped.data) < len(plain.data) * 0.6
+    again = guest.get("/music-share/static/listen.css", headers={"If-None-Match": plain.headers["ETag"]})
+    assert again.status_code == 304 and not again.data
+
+
+def test_static_route_still_refuses_traversal_and_dotfiles(guest):
+    for p in ("/music-share/static/../app/musicshare/__init__.py", "/music-share/static/.x", "/music-share/static/%2e%2e/wsgi.py", "/music-share/static/nothing.css"):
+        assert guest.get(p).status_code in (404, 308)
+
+
+# ---- an older database is upgraded, an older backup is too -------------------------------------------------------------------------------------
+def test_a_version_1_database_gets_the_new_columns_and_keeps_its_rows(tmp_path):
+    import sqlite3
+    from musicshare import db
+    path = tmp_path / "old.db"
+    c = sqlite3.connect(path)
+    c.executescript(db.SCHEMA.replace("  play_count INTEGER NOT NULL DEFAULT 0,           -- how many times someone pressed play (the audio was fetched from the start)\n  last_played_at TEXT\n", "  x INTEGER\n").replace("  last_opened_at TEXT,\n  x INTEGER", "  last_opened_at TEXT"))
+    c.execute("INSERT INTO tracks (token, title, created_at, filename, orig_filename, mime, size, sha256) VALUES ('t','Old','2026-01-01T00:00:00Z','f.wav','f.wav','audio/wav',1,'x')")
+    c.execute("PRAGMA user_version = 1"); c.commit(); c.close()
+    db.init(path)
+    c = db.connect(path)
+    row = c.execute("SELECT title, play_count, last_played_at FROM tracks").fetchone()
+    assert tuple(row) == ("Old", 0, None) and c.execute("PRAGMA user_version").fetchone()[0] == db.VERSION
+    db.init(path)                                                                                          # and running it again is harmless
+
+
+def test_public_pages_ship_smaller_peak_lists_than_the_studio(owner, guest):
+    t = make(owner, visibility="listed")
+    studio_len = len(owner.get("/music-share/api/tracks").json[0]["peaks"])
+    page = guest.get("/music-share/").get_data(as_text=True)
+    import re
+    bars = len(re.search(r'data-peaks="([^"]*)"', page).group(1).split(","))
+    assert bars <= 100 and (studio_len == 0 or bars <= studio_len)
+
+
+def test_pages_carry_a_favicon_and_link_preview_text_but_no_social_parts(owner, guest):
+    t = make(owner, "Preview me.wav")
+    owner.patch(f"/music-share/api/tracks/{t['id']}", json={"notes": "rough mix, drums too loud"})
+    page = guest.get(f"/music-share/t/{t['token']}").get_data(as_text=True)
+    assert 'rel="icon"' in page and 'property="og:title" content="Preview me"' in page and "rough mix, drums too loud" in page
+    for social in ("like", "follow", "share on", "repost", "comment", "subscribe"):
+        assert social not in page.lower().replace("link", "").replace("nofollow", "")
+
+
+# ---- the public pages do not wait on the disk ---------------------------------------------------------------------------------------------------------
+def test_a_repeat_visit_to_a_public_page_touches_no_database(owner, guest, monkeypatch):
+    from musicshare import db
+    t = make(owner, "Cached.wav", "listed")
+    first = guest.get("/music-share/")
+    assert first.status_code == 200 and b"Cached" in first.data
+    track_first = guest.get(f"/music-share/t/{t['token']}", headers=ROBOT_UA)
+    def boom(*a, **k):
+        raise AssertionError("the database was used for a repeat view")
+    monkeypatch.setattr(db, "thread_conn", boom)
+    monkeypatch.setattr(db, "connect", boom)
+    assert guest.get("/music-share/").data == first.data
+    assert guest.get(f"/music-share/t/{t['token']}", headers=ROBOT_UA).data == track_first.data      # (a robot's view is not counted, so even the tally stays off the disk)
+
+
+def test_cached_pages_are_refreshed_the_moment_the_owner_changes_something(owner, guest):
+    t = make(owner, "Before.wav", "listed")
+    assert b"Before" in guest.get("/music-share/").data
+    owner.patch(f"/music-share/api/tracks/{t['id']}", json={"title": "After rename"})
+    page = guest.get("/music-share/").data
+    assert b"After rename" in page and b"Before" not in page
+    owner.patch(f"/music-share/api/tracks/{t['id']}", json={"visibility": "unlisted"})
+    assert b"After rename" not in guest.get("/music-share/").data                          # taken off the public page at once
+    new = owner.post(f"/music-share/api/tracks/{t['id']}/new-link").json
+    assert guest.get(f"/music-share/t/{t['token']}").status_code == 404 and guest.get(f"/music-share/t/{new['token']}").status_code == 200
+
+
+def test_the_owner_never_gets_a_stale_page(owner):
+    make(owner, "Mine.wav", "listed")
+    owner.get("/music-share/")
+    make(owner, "Second.wav", "listed", seed=3)
+    assert b"Second" in owner.get("/music-share/").data
+
+
+def test_pages_answer_304_when_the_browser_already_has_them_and_are_gzipped_once(guest, owner):
+    import gzip as gz
+    for i in range(6):
+        make(owner, f"Many {i}.wav", "listed", seed=i)
+    plain = guest.get("/music-share/")
+    zipped = guest.get("/music-share/", headers={"Accept-Encoding": "gzip"})
+    assert zipped.headers["Content-Encoding"] == "gzip" and gz.decompress(zipped.data) == plain.data
+    again = guest.get("/music-share/", headers={"Accept-Encoding": "gzip", "If-None-Match": zipped.headers["ETag"]})
+    assert again.status_code == 304 and not again.data
+
+
+def test_a_404_for_an_unknown_token_is_never_cached(guest):
+    assert guest.get("/music-share/t/nothing").status_code == 404
+    assert guest.get("/music-share/t/nothing").status_code == 404
+
+
+def test_counts_are_buffered_and_flushed_before_the_studio_shows_them(owner, guest, app):
+    t = make(owner)
+    assert guest.get(f"/music-share/t/{t['token']}", headers=PERSON).status_code == 200
+    assert stats(owner)[0] == 1
+
+
+def test_the_counter_tally_batches_and_does_not_lose_counts(tmp_path):
+    from musicshare import db
+    from musicshare.counts import Counts
+    path = tmp_path / "c.db"
+    db.init(path)
+    c = db.connect(path)
+    c.execute("INSERT INTO tracks (token, title, created_at, filename, orig_filename, mime, size, sha256) VALUES ('tk','T','2026-01-01T00:00:00Z','f','f','audio/wav',1,'x')")
+    c.commit(); c.close()
+    counts = Counts(path, inline=False)
+    for _ in range(5):
+        counts.opened("tracks", "tk")
+    counts.played("token", "tk"); counts.played("id", 1)
+    assert counts.pending() == 3
+    r = db.connect(path).execute("SELECT open_count, play_count FROM tracks").fetchone()
+    assert tuple(r) == (0, 0)                                        # nothing written yet: a view costs no disk access
+    counts.flush()
+    r = db.connect(path).execute("SELECT open_count, play_count, first_opened_at IS NOT NULL FROM tracks").fetchone()
+    assert tuple(r) == (5, 2, 1) and counts.pending() == 0
+    counts.flush()                                                   # nothing to do, nothing breaks
+
+
+def test_one_connection_per_thread_sees_other_connections_writes(tmp_path):
+    from musicshare import db
+    path = tmp_path / "t.db"
+    db.init(path)
+    a = db.thread_conn(path)
+    assert db.thread_conn(path) is a
+    other = db.connect(path)
+    other.execute("INSERT INTO tracks (token, title, created_at, filename, orig_filename, mime, size, sha256) VALUES ('x','Seen','2026-01-01T00:00:00Z','f','f','audio/wav',1,'x')")
+    other.commit(); other.close()
+    assert a.execute("SELECT title FROM tracks").fetchone()[0] == "Seen"
+
+
+def test_bundles_join_the_real_files_and_cache_for_a_year(guest):
+    import re
+    page = guest.get("/music-share/").get_data(as_text=True)
+    assert len(re.findall(r'(?:href|src)="/music-share/static/', page)) == 3                          # theme.js, one stylesheet, one script
+    css = guest.get(re.search(r'href="(/music-share/static/bundle-public\.css\?v=[0-9a-f]{8})"', page).group(1))
+    js = guest.get(re.search(r'src="(/music-share/static/bundle-public\.js\?v=[0-9a-f]{8})"', page).group(1))
+    assert css.status_code == 200 and "immutable" in css.headers["Cache-Control"] and b".play-btn" in css.data and b"--accent" in css.data
+    assert js.status_code == 200 and b"window.Wave" in js.data and b"player-bar" not in js.data or b"bar-play" in js.data
+    assert guest.get("/music-share/static/bundle-nothing.js").status_code == 404
+
+
+def test_speed_check_reports_disks_load_and_advice(owner, guest):
+    r = owner.get("/music-share/api/diagnostics")
+    d = r.json
+    assert r.status_code == 200 and d["commit_data_volume_ms"] is not None and d["database_read_ms"] >= 0 and d["advice"] and "load" in d
+    assert guest.get("/music-share/api/diagnostics").status_code == 401
+
+
+def test_database_can_live_on_another_disk_and_backup_and_restore_still_work(tmp_path, site):
+    import shutil
+    from conftest import Wall, owner_cookie
+    from musicshare import create_app
+    cfg = {"TESTING": True, "JOBS_SYNC": True, "MUSICSHARE_BASE_PATH": "/music-share", "MUSICSHARE_STATIC_DIR": str(__import__("conftest").ROOT / "static"),
+           "MUSICSHARE_SITE_KEY_FILE": str(site / "keys" / "musicshare.key"), "MUSICSHARE_INSECURE_COOKIES": "1", "clock": Wall()}
+    app = create_app({**cfg, "MUSICSHARE_DATA_DIR": str(tmp_path / "volume"), "MUSICSHARE_DB_DIR": str(tmp_path / "boot"),
+                      "MUSICSHARE_BACKUP_DIR": str(tmp_path / "bk"), "MUSICSHARE_RESTORE_DIR": str(tmp_path / "rs")})
+    o = app.test_client(); o.set_cookie("site_musicshare", owner_cookie(site))
+    t = upload(o).json["tracks"][0]
+    assert (tmp_path / "boot" / "musicshare.db").is_file() and not (tmp_path / "volume" / "musicshare.db").exists()
+    assert o.post("/music-share/api/backup").json["audio_copied"] == 1
+    shutil.copytree(tmp_path / "bk", tmp_path / "rs")
+    app2 = create_app({**cfg, "MUSICSHARE_DATA_DIR": str(tmp_path / "v2"), "MUSICSHARE_DB_DIR": str(tmp_path / "b2"), "MUSICSHARE_RESTORE_DIR": str(tmp_path / "rs")})
+    o2 = app2.test_client(); o2.set_cookie("site_musicshare", owner_cookie(site))
+    assert o2.post("/music-share/api/restore").json["tracks"] == 1
+    assert app2.test_client().get(f"/music-share/t/{t['token']}").status_code == 200 and (tmp_path / "b2" / "musicshare.db").is_file()

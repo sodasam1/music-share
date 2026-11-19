@@ -50,3 +50,13 @@ The menu and grey placeholder rows are part of `studio.html`, so they appear as 
 To see whether a slow page is the server or the network: open the browser's developer tools, Network tab, click a request, Timing. The **Server-Timing: app** line is the time this
 server spent on it. Program files (`/usr/local/music-share/static`) are on the boot disk; only the database and audio are on the data volume.
 `MS_PY=... node tests/e2e/first-paint.cjs` times the Studio with an artificial API delay (before: menu at 1367 ms with a 300 ms delay; after: 67 ms).
+
+## Look and feel (branch `music-share-soundcloud-style-polish-and-speed`)
+Round play buttons, chunky waveforms with the played part in your accent colour, the times at the ends, a bar at the bottom that follows what is playing (pause, seek, space bar), a bigger single-track page, and the same
+header, logo and favicon as Version Control. `static/listen.css` is that shared look: **the same file lives in both repos (music-share and version-control); keep them identical.** There are no social parts and there will not be:
+no likes, follows, comments, counts shown to listeners, discovery or sign-ups. The only numbers (opened, played) are for you, in the Studio.
+- **Played vs opened.** "Opened" counts people opening a page; chat apps that fetch the page to build a link preview (and HEAD requests) are ignored. "Played" counts a listener starting a track (the audio is requested from its first byte), once per listener per ten minutes; seeking, you, and robots do not count.
+- Link previews: pages carry a title and your notes as the preview text, nothing else (no image).
+- Studio: upload progress bar; per-track "played N times, last <date>".
+- Speed: each static file is read once, gzipped once and kept in memory; pages ask for `/static/x.css?v=<hash>` which browsers keep for a year (the address changes when the file does). Waveform data on list pages is halved (100 bars).
+- Upgrade: the database is upgraded in place on start (two new columns); restoring an older backup upgrades it too.

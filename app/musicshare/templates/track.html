@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ t.title }}{% endblock %}
+{% block ogtitle %}{{ t.title }}{% endblock %}
+{% block ogdesc %}{{ (t.notes or "Listen")[:140] }}{% endblock %}
 {% block body %}
-{% with link=False, download=True %}{% include "_item.html" %}{% endwith %}
+<div class="hero">{% with link=False, download=True, big=True %}{% include "_item.html" %}{% endwith %}</div>
 {% endblock %}
