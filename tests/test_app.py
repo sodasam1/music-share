@@ -575,7 +575,7 @@ def test_one_connection_per_thread_sees_other_connections_writes(tmp_path):
 def test_bundles_join_the_real_files_and_cache_for_a_year(guest):
     import re
     page = guest.get("/music-share/").get_data(as_text=True)
-    assert len(re.findall(r'(?:href|src)="/music-share/static/', page)) == 3                          # theme.js, one stylesheet, one script
+    assert len(re.findall(r'(?:href|src)="/music-share/static/', page)) == 4                          # theme.js, one stylesheet, one script, the favicon
     css = guest.get(re.search(r'href="(/music-share/static/bundle-public\.css\?v=[0-9a-f]{8})"', page).group(1))
     js = guest.get(re.search(r'src="(/music-share/static/bundle-public\.js\?v=[0-9a-f]{8})"', page).group(1))
     assert css.status_code == 200 and "immutable" in css.headers["Cache-Control"] and b".play-btn" in css.data and b"--accent" in css.data
@@ -624,3 +624,16 @@ def test_speed_check_times_a_real_sqlite_save_on_both_disks(owner):
     for key in ("sqlite_data_volume", "sqlite_boot_disk"):
         assert d[key] is None or {"save_ms", "checkpoint_ms"} <= set(d[key])
     assert d["sqlite_data_volume"] is not None
+
+
+def test_nothing_is_drawn_from_a_data_url(owner, guest):
+    """The live server's relayd adds `default-src https: 'unsafe-inline'`, which blocks data: images (they made the play symbols and the logo vanish).
+    Icons and the logo must be CSS shapes or inline markup, and the favicon a real file."""
+    for client, url in ((guest, "/music-share/"), (owner, "/music-share/studio")):
+        html = client.get(url).get_data(as_text=True)
+        assert "data:image" not in html and "data:" not in re.sub(r"data-[a-z]+", "", html), url
+        for href in re.findall(r'(?:href|src)="([^"]*(?:bundle-[a-z]+\.(?:css|js)|favicon\.svg)[^"]*)"', html):
+            assert client.get(href).status_code == 200, href
+            if ".css" in href or ".js" in href:
+                assert "data:image" not in client.get(href).get_data(as_text=True), href
+    assert "<svg" in guest.get("/music-share/").get_data(as_text=True)

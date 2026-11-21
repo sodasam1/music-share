@@ -35,3 +35,6 @@ canvas.wave { background: linear-gradient(var(--line), var(--line)) center / 100
 button.working { cursor: progress; }
 @media (prefers-reduced-motion: reduce) { .net::before { animation: none; width: 100%; opacity: .5; } }
 .speed .track-meta { font-size: .9rem; }
+
+/* In the Studio the round buttons stay plain: no play or pause symbol (the playing track's title turns accent-coloured instead). The public pages show the symbols. */
+.studio .play-btn:not([data-state="loading"])::before { display: none; }
