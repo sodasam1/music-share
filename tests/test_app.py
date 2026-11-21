@@ -123,12 +123,12 @@ def test_new_link_revokes_the_old_one(owner, guest):
 def test_delete_forever_needs_the_exact_title_and_removes_the_audio(owner, guest, app, tmp_path):
     t = make(owner, "Delete me.wav")
     files = list((tmp_path / "data" / "audio").iterdir())
-    assert len(files) == 1
+    assert 1 <= len(files) <= 2                      # the original, and (when ffmpeg is there) the small streaming copy
     assert owner.delete(f"/music-share/api/tracks/{t['id']}", json={"confirm": "wrong"}).status_code == 409
     assert owner.delete(f"/music-share/api/tracks/{t['id']}").status_code == 409
-    assert files[0].exists()
+    assert all(f.exists() for f in files)
     assert owner.delete(f"/music-share/api/tracks/{t['id']}", json={"confirm": "Delete me"}).status_code == 200
-    assert not files[0].exists() and guest.get(f"/music-share/t/{t['token']}").status_code == 404
+    assert not any(f.exists() for f in files) and guest.get(f"/music-share/t/{t['token']}").status_code == 404
 
 
 # ---- upload ---------------------------------------------------------------------------------------------------------------
@@ -161,7 +161,7 @@ def test_peaks_and_duration_are_measured(owner):
 
 def test_audio_supports_range_requests(owner, guest):
     t = make(owner)
-    full = guest.get(f"/music-share/a/{t['token']}")
+    full = guest.get(f"/music-share/a/{t['token']}?download=1")                  # the original, byte for byte
     assert full.status_code == 200 and full.headers["Accept-Ranges"] == "bytes" and full.data[:4] == b"RIFF"
     part = guest.get(f"/music-share/a/{t['token']}", headers={"Range": "bytes=0-99"})
     assert part.status_code == 206 and len(part.data) == 100 and part.headers["Content-Range"].startswith("bytes 0-99/")

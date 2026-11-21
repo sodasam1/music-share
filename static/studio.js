@@ -8,6 +8,10 @@
   window.lockScreen.bind(audio, null);
   let tab = "tracks", tracks = [], playlists = [], allTracks = [], backup = null, playing = null;
   const waves = new Map();
+  const ACCEPT = "audio/*,.wav,.mp3,.m4a,.flac,.ogg,.aac,.aif,.aiff,.caf";
+  let selecting = false;
+  const picked = new Set();
+  const size = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
 
   function h(tag, attrs, ...kids) {
     const el = document.createElement(tag);
@@ -79,7 +83,7 @@
   }
   const reload = () => load(false);
   function markTabs() { for (const b of document.querySelectorAll("#tabs button")) b.setAttribute("aria-pressed", String(b.dataset.tab === tab)); }
-  for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => { tab = b.dataset.tab; markTabs(); run(() => load(true)); });
+  for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => { tab = b.dataset.tab; selecting = false; picked.clear(); markTabs(); run(() => load(true)); });
 
   // ---- playing in the Studio ---------------------------------------------------------------------------------------
   let loading = false;
@@ -90,13 +94,23 @@
     }
   }
   function play(t, at) {
-    if (playing !== t.id) { playing = t.id; window.lockScreen.set(t.title); audio.src = t.audio; if (at) audio.addEventListener("loadedmetadata", () => { audio.currentTime = at; }, { once: true }); }
+    if (playing !== t.id) { playing = t.id; window.lockScreen.set(t.title); audio.src = window.quality.url(t.audio); if (at) audio.addEventListener("loadedmetadata", () => { audio.currentTime = at; }, { once: true }); }
     else if (at != null) audio.currentTime = at;
     loading = true; paintPlay();
     audio.play().catch(() => { loading = false; paintPlay(); });
   }
   for (const ev of ["waiting", "loadstart"]) audio.addEventListener(ev, () => { loading = !audio.paused || ev === "loadstart"; paintPlay(); });
   for (const ev of ["playing", "canplay", "error", "pause"]) audio.addEventListener(ev, () => { loading = false; paintPlay(); });
+  window.quality.onChange(() => {
+    const t = tracks.find((x) => x.id === playing);
+    if (!t) return;
+    const at = audio.currentTime, was = !audio.paused;
+    audio.src = window.quality.url(t.audio);
+    const target = audio.src;                                      // (preload is "none": metadata only arrives once play() is called)
+    audio.addEventListener("loadedmetadata", () => { if (audio.src === target) audio.currentTime = at; }, { once: true });
+    if (was) { loading = true; audio.play().catch(() => { loading = false; paintPlay(); }); }
+    paintPlay();
+  });
   audio.addEventListener("timeupdate", () => { const w = waves.get(playing); if (w) w.set({ time: audio.currentTime, duration: audio.duration || 0 }); });
 
   // a waveform is drawn only when its row is near the screen
@@ -111,17 +125,23 @@
     const canvas = h("canvas", { class: "wave" });
     const facts = [day(t.created_at), fmt(t.duration_s), t.visibility, t.archived ? "archived" : "",
       t.play_count ? "played " + t.play_count + "x, last " + day(t.last_played_at) : "not played yet", t.open_count ? "opened " + t.open_count + "x" : "",
-      t.analysis_status === "pending" ? "measuring waveform…" : t.analysis_status === "failed" ? "waveform unavailable" : ""].filter(Boolean).join(" · ");
+      t.analysis_status === "pending" ? "measuring waveform…" : t.analysis_status === "failed" ? "waveform unavailable" : "",
+      t.stream_status === "ready" && t.stream_size ? "friends stream a " + size(t.stream_size) + " copy (original " + size(t.size) + ")" :
+        t.stream_status === "pending" ? "making the streaming copy…" : t.stream_status === "failed" ? "streaming copy failed: friends get the original" : ""].filter(Boolean).join(" · ");
     const row = h("article", { class: "item track" },
       h("div", { class: "track-head" },
+        selecting ? h("label", { class: "pick-wrap" }, h("input", { type: "checkbox", class: "pick", checked: picked.has(t.id), "aria-label": "Select " + t.title,
+          onchange: (e) => { if (e.target.checked) picked.add(t.id); else picked.delete(t.id); paintSelectBar(); } })) : null,
         h("button", { class: "play play-btn", type: "button", "data-id": String(t.id), "data-state": "play", "aria-label": "Play " + t.title, onclick: () => (playing === t.id && !audio.paused ? audio.pause() : play(t)) }),
         h("div", { class: "track-text" }, h("span", { class: "title" }, t.title), h("div", { class: "track-meta" }, facts))),
       h("div", { class: "wave-box" }, canvas),
       t.notes ? h("p", { class: "muted notes" }, t.notes) : null,
       h("div", { class: "actions" },
         act("Copy link", copyLink(t.link)),
+        navigator.share ? h("button", { type: "button", onclick: () => navigator.share({ title: t.title, url: full(t.link) }).catch(() => {}) }, "Share") : null,
         h("a", { class: "btn", href: t.link, target: "_blank", rel: "noopener" }, "Open"),
         h("button", { type: "button", onclick: () => edit(t, row) }, "Edit"),
+        replaceAudio(t, () => row),
         act(t.archived ? "Unarchive" : "Archive", async () => { await send(`tracks/${t.id}/${t.archived ? "unarchive" : "archive"}`, "POST"); removeTrack(t.id); }),
         act("New link", confirmed("Make a new link? The old link will stop working.", async () => replaceTrack(await send(`tracks/${t.id}/new-link`, "POST")))),
         act("Delete forever", typed("This deletes the audio forever. Type the exact title to confirm:", t.title, async (v) => { await send(`tracks/${t.id}`, "DELETE", { confirm: v }); removeTrack(t.id); }))));
@@ -130,6 +150,59 @@
       waves.set(t.id, window.Wave.attach(canvas, { peaks: fit(t.peaks, n), duration: t.duration_s || 0, onSeek: (s) => play(t, s) }));
     });
     return row;
+  }
+
+  // Put a new recording behind the same link. The server keeps the old file in its "replaced" folder; nothing is deleted.
+  function replaceAudio(t, getRow) {
+    const input = h("input", { type: "file", accept: ACCEPT, hidden: true });
+    input.addEventListener("change", async () => {
+      const f = input.files[0]; input.value = "";
+      if (!f) return;
+      if (!confirm("Put \"" + f.name + "\" behind the link for \"" + t.title + "\"?\n\nThe link, title and notes stay the same. The old file is kept on the server in its \"replaced\" folder. The waveform and the streaming copy are made again.")) return;
+      const row = getRow(); if (row) row.classList.add("pending");
+      await run(async () => {
+        const fd = new FormData(); fd.append("file", f);
+        busy(1);
+        try {
+          const r = await fetch("api/tracks/" + t.id + "/audio", { method: "PUT", body: fd, credentials: "same-origin" });
+          if (r.status === 401) return login();
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.error || "error " + r.status);
+          replaceTrack(d); notice("Replaced. The waveform is measured again in the background."); setTimeout(() => run(reload), 4000);
+        } finally { busy(-1); }
+      });
+      if (row && row.isConnected) row.classList.remove("pending");
+    });
+    return h("span", null, input, h("button", { type: "button", onclick: () => input.click() }, "Replace audio…"));
+  }
+
+  // ---- selecting several tracks and acting on them at once ---------------------------------------------------------
+  function paintSelectBar() { const c = $("#pick-count"); if (c) c.textContent = picked.size ? picked.size + " selected" : "Tap the boxes to choose tracks"; }
+  async function bulk(action, extra, done) {
+    const ids = [...picked];
+    if (!ids.length) { notice("Choose at least one track first."); return; }
+    const d = await send("tracks/bulk", "POST", { action, ids, ...extra });
+    picked.clear(); await reload(); notice(done(d.changed));
+  }
+  async function startSelect() {
+    selecting = true; picked.clear();
+    if (tab === "tracks" && !playlists.length) { try { playlists = await api("playlists"); } catch (e) { /* the playlist menu just stays empty */ } }
+    render();
+  }
+  function selectBar() {
+    if (!tracks.length) return null;
+    if (!selecting) return h("div", { class: "actions" }, h("button", { type: "button", onclick: () => run(startSelect) }, "Select…"));
+    const pl = h("select", { "aria-label": "Add the chosen tracks to a playlist" }, h("option", { value: "" }, "Add to playlist…"), ...playlists.map((p) => h("option", { value: String(p.id) }, p.title)));
+    pl.addEventListener("change", async () => { const id = Number(pl.value); pl.value = ""; if (id) await run(() => bulk("add_to_playlist", { playlist_id: id }, (n) => n + " track(s) added to the playlist.")); });
+    const doing = (label, action, done) => act(label, () => bulk(action, {}, done));
+    return h("div", { class: "select-bar" },
+      h("p", { class: "muted small", id: "pick-count", role: "status" }, "Tap the boxes to choose tracks"),
+      h("div", { class: "actions" },
+        h("button", { type: "button", onclick: () => { for (const t of tracks) picked.add(t.id); render(); } }, "All"),
+        h("button", { type: "button", onclick: () => { picked.clear(); render(); } }, "None"),
+        tab === "tracks" ? [doing("Make listed", "list", (n) => n + " track(s) are now listed."), doing("Make unlisted", "unlist", (n) => n + " track(s) are now unlisted."),
+          doing("Archive", "archive", (n) => n + " track(s) archived."), pl] : doing("Unarchive", "unarchive", (n) => n + " track(s) restored."),
+        h("button", { type: "button", onclick: () => { selecting = false; picked.clear(); render(); } }, "Done")));
   }
 
   function edit(t, row) {
@@ -144,7 +217,7 @@
 
   // ---- uploading, with a progress bar -----------------------------------------------------------------------------
   function uploadBox() {
-    const input = h("input", { type: "file", multiple: true, accept: "audio/*,.wav,.mp3,.m4a,.flac,.ogg,.aac,.aif,.aiff,.caf", hidden: true });
+    const input = h("input", { type: "file", multiple: true, accept: ACCEPT, hidden: true });
     const vis = h("select", { "aria-label": "Visibility of new uploads" }, h("option", { value: "unlisted" }, "Unlisted"), h("option", { value: "listed" }, "Listed"));
     const bar = h("progress", { max: "100", value: "0", hidden: true, "aria-label": "Upload progress" });
     function go(files) {
@@ -244,6 +317,7 @@
     const main = $("#main"); main.textContent = ""; waves.clear(); main.removeAttribute("aria-busy");
     if (tab === "tracks" || tab === "archive") {
       if (tab === "tracks") main.append(uploadBox());
+      main.append(selectBar() || "");
       if (!tracks.length) main.append(h("p", { class: "empty" }, tab === "tracks" ? "No tracks yet. Add a file above." : "Nothing archived."));
       for (const t of tracks) main.append(trackRow(t));
     } else if (tab === "playlists") {
@@ -252,6 +326,7 @@
       for (const p of playlists) main.append(playlistCard(p));
     } else main.append(backupPanel(), speedPanel());
     paintPlay();
+    paintSelectBar();
   }
 
   run(() => load(true));

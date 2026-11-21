@@ -7,6 +7,7 @@
 <title>{% block title %}Music{% endblock %}</title>
 <meta property="og:title" content="{% block ogtitle %}Music{% endblock %}">
 <meta property="og:description" content="{% block ogdesc %}Listen{% endblock %}">
+{% block ogimage %}{% endblock %}
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#101010" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/svg+xml" href="{{ asset('favicon.svg') }}">
@@ -16,7 +17,7 @@
 </head>
 <body>
 <div class="wrap">
-<header class="page-head"><a class="brand" href="{{ base }}/">{% include "_logo.html" %}Music</a><span class="spacer"></span>{% if owner %}<a class="quiet" href="{{ base }}/studio">Studio</a>{% endif %}</header>
+<header class="page-head"><a class="brand" href="{{ base }}/">{% include "_logo.html" %}Music</a><span class="spacer"></span>{% if owner %}<a class="quiet" href="{{ base }}/studio">Studio</a>{% endif %}<button type="button" id="quality" class="quality" hidden></button></header>
 {% block body %}{% endblock %}
 </div>
 <div class="player-bar" id="bar" hidden>

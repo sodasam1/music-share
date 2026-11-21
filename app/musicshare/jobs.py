@@ -8,9 +8,10 @@ from pathlib import Path
 
 from kitaudio import media
 
-from . import db
+from . import db, streamcopy
 
 log = logging.getLogger("musicshare")
+STREAM_KBPS = [streamcopy.KBPS]               # one-element list so the app can set it from its config at start-up
 
 
 def process(data_dir, db_path, ffmpeg, track_id):
@@ -31,6 +32,17 @@ def process(data_dir, db_path, ffmpeg, track_id):
             else:
                 log.warning("analysis failed for track %s: %s", track_id, err)
                 conn.execute("UPDATE tracks SET analysis_status = 'failed', peaks = '[]' WHERE id = ?", (track_id,))
+            conn.commit()
+        if row["stream_status"] == "pending":
+            fresh = conn.execute("SELECT duration_s, size FROM tracks WHERE id = ?", (track_id,)).fetchone()
+            if not streamcopy.needs_copy(src, fresh["duration_s"], fresh["size"]):
+                conn.execute("UPDATE tracks SET stream_status = 'none' WHERE id = ?", (track_id,))
+            else:
+                name = row["filename"].rsplit(".", 1)[0] + ".stream.m4a"
+                done, err = streamcopy.make_copy(ffmpeg, src, Path(data_dir) / "audio" / name, kbps=STREAM_KBPS[0])
+                conn.execute("UPDATE tracks SET stream_status = ?, stream_filename = ? WHERE id = ?", ("ready" if done else "failed", name if done else None, track_id))
+                if not done:
+                    log.warning("stream copy failed for track %s: %s", track_id, err)
             conn.commit()
         if not row["play_filename"] and src.suffix.lower() in (".m4a", ".mp4") and media.mp4_audio_codec(src) == "alac":
             play = row["filename"].rsplit(".", 1)[0] + ".play.flac"
@@ -85,7 +97,7 @@ class Worker:
         """After a restart or a restore: queue every track that still has no waveform, and every ALAC play copy that is missing."""
         conn = db.connect(self.db_path)
         try:
-            for (tid,) in conn.execute("SELECT id FROM tracks WHERE analysis_status = 'pending' OR (play_status != 'none' AND play_filename IS NULL)").fetchall():
+            for (tid,) in conn.execute("SELECT id FROM tracks WHERE analysis_status = 'pending' OR stream_status = 'pending' OR (play_status != 'none' AND play_filename IS NULL)").fetchall():
                 self.submit(tid)
         finally:
             conn.close()

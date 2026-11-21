@@ -58,3 +58,10 @@ button, a, summary, .play-btn, [role="button"] { -webkit-tap-highlight-color: tr
   .wrap { padding-bottom: 5rem; }
   .hero .wave-box canvas.wave { height: 72px; }
 }
+
+/* the Playback: lossy / lossless switch in the header: looks like the quiet links beside it */
+button.quality { border: 0; background: none; color: var(--muted); font-size: .9rem; min-height: 0; padding: 0 .3rem; cursor: pointer; text-decoration: none; }
+button.quality:hover { color: var(--text); border: 0; }
+button.quality[aria-pressed="true"] { color: var(--text); }
+@media (pointer: coarse) { button.quality { min-height: 44px; } }
+.page-head summary span { margin-left: .3em; }

@@ -25,7 +25,7 @@ from kitaudio import media
 from siteauth import SiteAuth
 
 from . import backup as backupmod
-from . import db, jobs
+from . import db, jobs, preview, streamcopy
 from .counts import Counts
 from .config import settings
 
@@ -66,6 +66,11 @@ def create_app(overrides=None):
     ffmpeg = cfg["ffmpeg"] if "ffmpeg" in cfg else (os.environ.get("MUSICSHARE_FFMPEG") if "MUSICSHARE_FFMPEG" in os.environ else shutil.which("ffmpeg"))
     show_download = cfg.get("MUSICSHARE_SHOW_DOWNLOAD", "1") == "1"
     archive_kills_link = cfg.get("MUSICSHARE_ARCHIVE_DISABLES_LINK", "0") == "1"
+    public_url = cfg.get("MUSICSHARE_PUBLIC_URL", "").rstrip("/")       # e.g. https://sanjaysubramanian.com: chat apps want an absolute address for the preview picture
+    try:
+        jobs.STREAM_KBPS[0] = max(64, min(320, int(cfg.get("MUSICSHARE_STREAM_KBPS", streamcopy.KBPS))))
+    except ValueError:
+        pass
     app.config.update(MAX_CONTENT_LENGTH=int(cfg.get("MUSICSHARE_MAX_UPLOAD_MB", "300")) * 1024 * 1024, TESTING=bool(cfg.get("TESTING")))
     (data_dir / "audio").mkdir(parents=True, exist_ok=True)
     (data_dir / "tmp").mkdir(parents=True, exist_ok=True)
@@ -174,7 +179,9 @@ def create_app(overrides=None):
                 "analysis_status": r["analysis_status"], "size": r["size"], "orig_filename": r["orig_filename"],
                 "token": r["token"], "link": link("t", r["token"]), "audio": f"{base}/api/audio/{r['id']}",
                 "open_count": r["open_count"], "first_opened_at": r["first_opened_at"], "last_opened_at": r["last_opened_at"],
-                "play_count": r["play_count"], "last_played_at": r["last_played_at"]}
+                "play_count": r["play_count"], "last_played_at": r["last_played_at"], "stream_status": r["stream_status"],
+                "stream_size": ((data_dir / "audio" / r["stream_filename"]).stat().st_size if r["stream_status"] == "ready" and r["stream_filename"]
+                                and (data_dir / "audio" / r["stream_filename"]).is_file() else None)}
 
     def playlist_dict(r, with_items=True):
         d = {"id": r["id"], "title": r["title"], "notes": r["notes"], "visibility": r["visibility"], "created_at": r["created_at"],
@@ -185,13 +192,23 @@ def create_app(overrides=None):
         return d
 
     def serve_audio(row):
-        play = row["play_filename"] if row["play_status"] == "ready" else None
-        name, mime = (play, "audio/flac") if play and (data_dir / "audio" / play).is_file() else (row["filename"], row["mime"])
+        """Download always gives the original. Playing gives the small AAC copy by default (what streaming services do: see docs/SPEED.md), or, when the
+        listener has switched to lossless (`?q=lossless`), the original (for Apple Lossless: the FLAC copy made for browsers that cannot play it).
+        If a copy is missing or not ready yet, the next best file is served, so a track always plays."""
+        download = request.args.get("download") == "1" and (show_download or auth.is_owner())
+        lossless = request.args.get("q") == "lossless"
+        name, mime = row["filename"], row["mime"]
+        if not download:
+            order = [("play_filename", "play_status", "audio/flac")] if lossless else [("stream_filename", "stream_status", "audio/mp4"), ("play_filename", "play_status", "audio/flac")]
+            for fname, status, m in order:
+                cand = row[fname] if row[status] == "ready" else None
+                if cand and (data_dir / "audio" / cand).is_file():
+                    name, mime = cand, m
+                    break
         path = data_dir / "audio" / name
         if not path.is_file():
             abort(404)
-        resp = send_file(path, mimetype=mime, conditional=True, max_age=0, download_name=row["orig_filename"],
-                         as_attachment=request.args.get("download") == "1" and (show_download or auth.is_owner()))
+        resp = send_file(path, mimetype=mime, conditional=True, max_age=0, download_name=row["orig_filename"], as_attachment=download)
         resp.headers["Accept-Ranges"] = "bytes"
         resp.headers["Cache-Control"] = "private, max-age=600"
         return resp
@@ -236,6 +253,9 @@ def create_app(overrides=None):
         sec = int(round(sec or 0))
         return f"{sec // 60}:{sec % 60:02d}" if sec else ""
 
+    def dt_stamp():
+        return time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+
     def pub(r, bars=200):
         peaks = fit(json.loads(r["peaks"]), bars) if r["peaks"] else []
         return {"title": r["title"], "notes": r["notes"], "peaks": ",".join(map(str, peaks)),
@@ -254,7 +274,7 @@ def create_app(overrides=None):
     # A page needs several small CSS and JS files; each extra file is another connection and TLS handshake on a one-CPU server. These "bundles" are made
     # by joining the real files in memory (nothing to build, nothing extra to keep in step), so a page loads one stylesheet and one script.
     BUNDLES = {"bundle-public.css": ["minimal/minimal.css", "listen.css", "mobile.css"], "bundle-studio.css": ["minimal/minimal.css", "listen.css", "musicshare.css", "mobile.css"],
-               "bundle-public.js": ["mobile.js", "wave/wave.js", "public.js"], "bundle-studio.js": ["minimal/theme-menu.js", "mobile.js", "wave/wave.js", "studio.js"]}
+               "bundle-public.js": ["mobile.js", "quality.js", "wave/wave.js", "public.js"], "bundle-studio.js": ["minimal/theme-menu.js", "mobile.js", "quality.js", "wave/wave.js", "studio.js"]}
 
     def load_asset(name):
         parts = BUNDLES.get(name)
@@ -346,7 +366,7 @@ def create_app(overrides=None):
     def track_page(token):
         def render():
             row = track_by_token(token)
-            return render_template("track.html", base=base, t=pub(row), noindex=True)
+            return render_template("track.html", base=base, t=pub(row), noindex=True, preview=abs_url(link("t", token) + "/preview.png"))
         resp = cached(render)
         if resp.status_code == 200:
             count_open("tracks", token)
@@ -358,6 +378,36 @@ def create_app(overrides=None):
         row = track_by_token(token)
         count_play("token", token)
         return serve_audio(row)
+
+    def abs_url(path):
+        return (public_url + path) if public_url else path
+
+    def png_response(raw_peaks, seed):
+        """The preview picture: drawn from the stored waveform, cached by chat apps for an hour, answered with 304 when unchanged."""
+        etag = '"' + hashlib.sha1(((raw_peaks or "") + (seed or "") + "p1").encode()).hexdigest()[:16] + '"'
+        if request.headers.get("If-None-Match") == etag:
+            return Response(status=304, headers={"ETag": etag, "Cache-Control": "public, max-age=3600"})
+        try:
+            peaks = json.loads(raw_peaks) if raw_peaks else []
+        except ValueError:
+            peaks = []
+        resp = Response(preview.waveform_png(peaks), mimetype="image/png")
+        resp.headers["ETag"] = etag
+        resp.headers["Cache-Control"] = "public, max-age=3600"
+        return resp
+
+    @bp.get("/t/<token>/preview.png")
+    @auth.public
+    def track_preview(token):
+        row = track_by_token(token)
+        return png_response(row["peaks"], row["sha256"])
+
+    @bp.get("/p/<token>/preview.png")
+    @auth.public
+    def playlist_preview(token):
+        pl = playlist_by_token(token)
+        row = conn().execute("SELECT t.peaks, t.sha256 FROM playlist_items i JOIN tracks t ON t.id = i.track_id WHERE i.playlist_id = ? ORDER BY i.position LIMIT 1", (pl["id"],)).fetchone()
+        return png_response(row["peaks"] if row else "", (row["sha256"] if row else pl["token"]))
 
     def playlist_by_token(token):
         row = conn().execute("SELECT * FROM playlists WHERE token = ?", (token,)).fetchone()
@@ -378,7 +428,8 @@ def create_app(overrides=None):
                 d["download"] = f"{d['audio']}?download=1" if show_download else None        # never the track's own link: a playlist link must not reveal it
                 d["page"] = None
                 items.append(d)
-            return render_template("playlist.html", base=base, p={"title": pl["title"], "notes": pl["notes"]}, items=items, noindex=True)
+            return render_template("playlist.html", base=base, p={"title": pl["title"], "notes": pl["notes"]}, items=items, noindex=True,
+                                   preview=abs_url(link("p", token) + "/preview.png"))
         resp = cached(render)
         if resp.status_code == 200:
             count_open("playlists", token)
@@ -414,6 +465,29 @@ def create_app(overrides=None):
         rows = conn().execute(f"SELECT * FROM tracks WHERE archived_at IS {'NOT ' if archived else ''}NULL ORDER BY created_at DESC, id DESC").fetchall()
         return jsonify([track_dict(r) for r in rows])
 
+    def ingest(f):
+        """Check an uploaded file and store it under a random name. Returns a dict, or raises Invalid with a message for the owner."""
+        orig = CTRL.sub("", os.path.basename((f.filename or "").replace("\\", "/")))[:255] or "untitled"
+        tmp = data_dir / "tmp" / (db.new_token() + ".part")
+        f.save(tmp)
+        try:
+            with open(tmp, "rb") as fh:
+                head = fh.read(16)
+            ext = Path(orig).suffix.lower()
+            if ext not in media.INPUT_FORMAT:
+                ext = media.sniff_audio_ext(head) or ""
+            if ext not in media.INPUT_FORMAT:
+                raise Invalid(f"{orig}: not a supported audio file")
+            digest = hashlib.sha256()
+            with open(tmp, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    digest.update(chunk)
+            stored = db.new_token().replace("-", "x").replace("_", "y") + ext
+            shutil.move(str(tmp), data_dir / "audio" / stored)
+            return {"orig": orig, "stored": stored, "mime": MIME[ext], "size": (data_dir / "audio" / stored).stat().st_size, "sha256": digest.hexdigest()}
+        finally:
+            tmp.unlink(missing_ok=True)
+
     @bp.post("/api/tracks")
     @auth.owner
     def upload():
@@ -425,33 +499,18 @@ def create_app(overrides=None):
             return err("visibility must be listed or unlisted")
         made, problems = [], []
         for f in files:
-            orig = CTRL.sub("", os.path.basename((f.filename or "").replace("\\", "/")))[:255] or "untitled"
-            tmp = data_dir / "tmp" / (db.new_token() + ".part")
-            f.save(tmp)
             try:
-                with open(tmp, "rb") as fh:
-                    head = fh.read(16)
-                ext = Path(orig).suffix.lower()
-                if ext not in media.INPUT_FORMAT:
-                    ext = media.sniff_audio_ext(head) or ""
-                if ext not in media.INPUT_FORMAT:
-                    problems.append(f"{orig}: not a supported audio file")
-                    continue
-                digest = hashlib.sha256()
-                with open(tmp, "rb") as fh:
-                    for chunk in iter(lambda: fh.read(1 << 20), b""):
-                        digest.update(chunk)
-                title = clean((re.sub(r"[_]+", " ", Path(orig).stem) or "Untitled")[:MAX_TITLE], MAX_TITLE, "title", False) or "Untitled"   # a very long file name must shorten the title, not fail the upload
-                stored = db.new_token().replace("-", "x").replace("_", "y") + ext
-                shutil.move(str(tmp), data_dir / "audio" / stored)
-                cur = conn().execute(
-                    "INSERT INTO tracks (token, title, visibility, created_at, filename, orig_filename, mime, size, sha256) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (db.new_token(), title[:MAX_TITLE], visibility, db.now_iso(), stored, orig, MIME[ext], (data_dir / "audio" / stored).stat().st_size, digest.hexdigest()))
-                conn().commit()
-                worker.submit(cur.lastrowid)
-                made.append(cur.lastrowid)
-            finally:
-                tmp.unlink(missing_ok=True)
+                got = ingest(f)
+            except Invalid as exc:
+                problems.append(str(exc))
+                continue
+            title = clean((re.sub(r"[_]+", " ", Path(got["orig"]).stem) or "Untitled")[:MAX_TITLE], MAX_TITLE, "title", False) or "Untitled"   # a very long file name must shorten the title, not fail the upload
+            cur = conn().execute(
+                "INSERT INTO tracks (token, title, visibility, created_at, filename, orig_filename, mime, size, sha256) VALUES (?,?,?,?,?,?,?,?,?)",
+                (db.new_token(), title[:MAX_TITLE], visibility, db.now_iso(), got["stored"], got["orig"], got["mime"], got["size"], got["sha256"]))
+            conn().commit()
+            worker.submit(cur.lastrowid)
+            made.append(cur.lastrowid)
         rows = [conn().execute("SELECT * FROM tracks WHERE id = ?", (i,)).fetchone() for i in made]
         return jsonify(tracks=[track_dict(r) for r in rows], problems=problems), (201 if made else 415)
 
@@ -501,6 +560,70 @@ def create_app(overrides=None):
         conn().commit()
         return jsonify(track_dict(live_track(tid)))
 
+    @bp.put("/api/tracks/<int:tid>/audio")
+    @auth.owner
+    def replace_audio(tid):
+        """Put a new recording behind the same link, title and notes. The old original is moved to <data>/replaced/ (never deleted); its small copies are
+        deleted (they are made again from the new file). Play and open counts are kept."""
+        row = live_track(tid)
+        f = request.files.get("file")
+        if f is None:
+            return err("send the new audio in the 'file' field")
+        try:
+            got = ingest(f)
+        except Invalid as exc:
+            return err(str(exc), 415)
+        (data_dir / "replaced").mkdir(exist_ok=True)
+        old = data_dir / "audio" / row["filename"]
+        if old.is_file():
+            shutil.move(str(old), data_dir / "replaced" / f"{tid}-{dt_stamp()}-{row['filename']}")
+        for name in (row["play_filename"], row["stream_filename"]):
+            if name:
+                (data_dir / "audio" / name).unlink(missing_ok=True)
+        conn().execute("UPDATE tracks SET filename = ?, orig_filename = ?, mime = ?, size = ?, sha256 = ?, duration_s = NULL, peaks = NULL, analysis_status = 'pending', "
+                       "play_filename = NULL, play_status = 'none', stream_filename = NULL, stream_status = 'pending' WHERE id = ?",
+                       (got["stored"], got["orig"], got["mime"], got["size"], got["sha256"], tid))
+        conn().commit()
+        worker.submit(tid)
+        return jsonify(track_dict(live_track(tid)))
+
+    BULK = ("list", "unlist", "archive", "unarchive", "add_to_playlist")
+
+    @bp.post("/api/tracks/bulk")
+    @auth.owner
+    def bulk_tracks():
+        """Change several tracks at once, in one database transaction: {"action": ..., "ids": [...], "playlist_id": n (for add_to_playlist)}.
+        There is deliberately no bulk delete: Delete forever stays one track at a time, with the title typed back."""
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or body.get("action") not in BULK:
+            return err("action must be one of: " + ", ".join(BULK))
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not ids or len(ids) > 500 or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids):
+            return err("ids must be a list of 1 to 500 track numbers")
+        ids = list(dict.fromkeys(ids))
+        marks = ",".join("?" * len(ids))
+        found = [r[0] for r in conn().execute(f"SELECT id FROM tracks WHERE id IN ({marks})", ids)]
+        if not found:
+            return err("none of those tracks exist", 404)
+        action, c = body["action"], conn()
+        if action in ("list", "unlist"):
+            c.execute(f"UPDATE tracks SET visibility = ? WHERE id IN ({marks})", ["listed" if action == "list" else "unlisted", *ids])
+        elif action == "archive":
+            c.execute(f"UPDATE tracks SET archived_at = ? WHERE archived_at IS NULL AND id IN ({marks})", [db.now_iso(), *ids])
+        elif action == "unarchive":
+            c.execute(f"UPDATE tracks SET archived_at = NULL WHERE id IN ({marks})", ids)
+        else:
+            pid = body.get("playlist_id")
+            if not isinstance(pid, int) or isinstance(pid, bool) or c.execute("SELECT 1 FROM playlists WHERE id = ?", (pid,)).fetchone() is None:
+                return err("playlist_id must be an existing playlist", 404)
+            nxt = c.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_items WHERE playlist_id = ?", (pid,)).fetchone()[0]
+            have = {r[0] for r in c.execute("SELECT track_id FROM playlist_items WHERE playlist_id = ?", (pid,))}
+            for tid in (i for i in ids if i in found and i not in have):
+                c.execute("INSERT INTO playlist_items (playlist_id, track_id, position) VALUES (?,?,?)", (pid, tid, nxt))
+                nxt += 1
+        c.commit()
+        return jsonify(ok=True, changed=len(found))
+
     @bp.post("/api/tracks/<int:tid>/new-link")
     @auth.owner
     def new_track_link(tid):
@@ -518,7 +641,7 @@ def create_app(overrides=None):
         body = request.get_json(silent=True) or {}
         if body.get("confirm") != row["title"]:
             return err("to delete forever, send the exact title as 'confirm'", 409)
-        for name in (row["filename"], row["play_filename"]):
+        for name in (row["filename"], row["play_filename"], row["stream_filename"]):
             if name:
                 (data_dir / "audio" / name).unlink(missing_ok=True)
         conn().execute("DELETE FROM tracks WHERE id = ?", (tid,))

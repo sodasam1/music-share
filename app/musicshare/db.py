@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS tracks (
   analysis_status TEXT NOT NULL DEFAULT 'pending', -- pending | ready | failed
   play_filename TEXT,                              -- a FLAC copy for browsers that cannot play the original (ALAC)
   play_status TEXT NOT NULL DEFAULT 'none',        -- none | pending | ready | failed
+  stream_filename TEXT,                            -- a small AAC copy that friends stream (the original stays for Download)
+  stream_status TEXT NOT NULL DEFAULT 'pending',   -- pending | ready | failed | none (the original is already small enough)
   open_count INTEGER NOT NULL DEFAULT 0,           -- how many times a person (not a link-preview robot) opened the track page; only you see this
   first_opened_at TEXT,
   last_opened_at TEXT,
@@ -49,7 +51,7 @@ CREATE TABLE IF NOT EXISTS playlist_items (
 );
 CREATE INDEX IF NOT EXISTS tracks_created ON tracks (created_at);
 """
-VERSION = 2
+VERSION = 3
 
 
 def now_iso():
@@ -79,6 +81,9 @@ def init(path):
     if "play_count" not in have_cols:                 # a version-1 database: add the two columns, keep everything else
         conn.execute("ALTER TABLE tracks ADD COLUMN play_count INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE tracks ADD COLUMN last_played_at TEXT")
+    if "stream_status" not in have_cols:               # a version-2 database: tracks already there get a stream copy made in the background
+        conn.execute("ALTER TABLE tracks ADD COLUMN stream_filename TEXT")
+        conn.execute("ALTER TABLE tracks ADD COLUMN stream_status TEXT NOT NULL DEFAULT 'pending'")
     conn.execute(f"PRAGMA user_version = {VERSION}")
     conn.commit()
     conn.close()

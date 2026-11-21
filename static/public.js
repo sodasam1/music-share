@@ -30,7 +30,8 @@
   function start(it, at) {
     if (current !== it) {
       current = it;
-      audio.src = it.dataset.audio;
+      ensure(it);
+      audio.src = window.quality.url(it.dataset.audio);
       barTitle.textContent = titleOf(it);
       window.lockScreen.set(titleOf(it));
       bar.hidden = false;
@@ -42,7 +43,10 @@
   }
   const toggle = (it) => { if (current === it && !audio.paused) audio.pause(); else start(it); };
 
-  for (const it of items) {
+  // A waveform is drawn only when its row is near the screen (a long list would otherwise draw every canvas at once, which is slow on a phone).
+  // `ensure` makes it on demand; a track that starts playing is always ensured (the next track of a playlist may be far below the screen).
+  function ensure(it) {
+    if (it._wave) return it._wave;
     const canvas = it.querySelector("canvas.wave");
     const raw = canvas.dataset.peaks ? canvas.dataset.peaks.split(",").map(Number) : [];
     let bins = 0;
@@ -52,13 +56,20 @@
     });
     const refit = () => { const n = Math.max(24, Math.floor(canvas.clientWidth / 4)); if (n !== bins && raw.length) { bins = n; w.set({ peaks: fit(raw, n) }); } };
     if (window.ResizeObserver) new ResizeObserver(refit).observe(canvas); else refit();
+    return w;
+  }
+  const seen = "IntersectionObserver" in window ? new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { seen.unobserve(e.target); ensure(e.target.closest(".item")); }
+  }, { rootMargin: "500px" }) : null;
+  for (const it of items) {
+    if (seen) seen.observe(it.querySelector("canvas.wave")); else ensure(it);
     it.querySelector(".play").addEventListener("click", () => toggle(it));
   }
 
   audio.addEventListener("timeupdate", () => {
     if (!current) return;
     const d = audio.duration || Number(current.querySelector("canvas").dataset.duration) || 0, t = audio.currentTime;
-    current._wave.set({ time: t, duration: d });
+    ensure(current).set({ time: t, duration: d });
     current.querySelector(".t-now").textContent = fmt(t);
     barFill.style.width = d ? Math.min(100, (t / d) * 100) + "%" : "0";
     barProg.setAttribute("aria-valuenow", String(d ? Math.round((t / d) * 100) : 0));
@@ -72,6 +83,16 @@
     if (playlist && i >= 0 && i + 1 < items.length) start(items[i + 1]); else paint();
   });
   window.lockScreen.bind(audio, playlist ? { prev: () => { const i = items.indexOf(current); if (i > 0) start(items[i - 1]); }, next: () => { const i = items.indexOf(current); if (i >= 0 && i + 1 < items.length) start(items[i + 1]); } } : null);
+  // Switching lossy/lossless while a track is loaded: carry on from the same second, playing or paused as before.
+  window.quality.onChange(() => {
+    if (!current) return;
+    const t = audio.currentTime, was = !audio.paused;
+    audio.src = window.quality.url(current.dataset.audio);
+    const target = audio.src;                                      // (preload is "none": metadata only arrives once play() is called)
+    audio.addEventListener("loadedmetadata", () => { if (audio.src === target) audio.currentTime = t; }, { once: true });
+    if (was) { loading = true; audio.play().catch(() => { loading = false; paint(); }); }
+    paint();
+  });
   barPlay.addEventListener("click", () => { if (current) toggle(current); else toggle(items[0]); });
   function seekBar(e) { const r = barProg.getBoundingClientRect(), d = audio.duration; if (d) audio.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * d; }
   barProg.addEventListener("pointerdown", (e) => { barProg.setPointerCapture(e.pointerId); seekBar(e); barProg.onpointermove = seekBar; });

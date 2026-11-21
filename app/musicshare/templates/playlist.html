@@ -2,6 +2,7 @@
 {% block title %}{{ p.title }}{% endblock %}
 {% block ogtitle %}{{ p.title }}{% endblock %}
 {% block ogdesc %}{{ (p.notes or "A playlist")[:140] }}{% endblock %}
+{% block ogimage %}{% if preview %}<meta property="og:image" content="{{ preview }}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="{{ preview }}">{% endif %}{% endblock %}
 {% block body %}
 <h1 class="pl-title">{{ p.title }}</h1>
 {% if p.notes %}<p class="muted notes">{{ p.notes }}</p>{% endif %}

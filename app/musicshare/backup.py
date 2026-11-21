@@ -119,6 +119,7 @@ def restore(source, data_dir, db_file=None):
         dst = sqlite3.connect(live)
         try:
             src.backup(dst)
+            dst.execute("UPDATE tracks SET stream_status = 'pending', stream_filename = NULL")
             dst.execute("UPDATE tracks SET play_status = CASE WHEN play_status = 'none' THEN 'none' ELSE 'pending' END, play_filename = NULL")
             dst.commit()
         finally:

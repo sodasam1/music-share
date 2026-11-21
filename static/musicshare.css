@@ -38,3 +38,8 @@ button.working { cursor: progress; }
 
 /* In the Studio the round buttons stay plain: no play or pause symbol (the playing track's title turns accent-coloured instead). The public pages show the symbols. */
 .studio .play-btn:not([data-state="loading"])::before { display: none; }
+
+/* choosing several tracks */
+.studio .select-bar { margin: 0 0 1.2rem; padding: .2rem 0 .4rem; border-bottom: 1px solid var(--line); }
+.studio .pick-wrap { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin: 0 -8px 0 -10px; cursor: pointer; }
+.studio .pick { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); }
