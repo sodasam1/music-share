@@ -607,3 +607,20 @@ def test_database_can_live_on_another_disk_and_backup_and_restore_still_work(tmp
     o2 = app2.test_client(); o2.set_cookie("site_musicshare", owner_cookie(site))
     assert o2.post("/music-share/api/restore").json["tracks"] == 1
     assert app2.test_client().get(f"/music-share/t/{t['token']}").status_code == 200 and (tmp_path / "b2" / "musicshare.db").is_file()
+
+
+def test_pages_are_set_up_for_phones(owner, guest):
+    for client, url in ((guest, "/music-share/"), (owner, "/music-share/studio")):
+        html = client.get(url).get_data(as_text=True)
+        assert "viewport-fit=cover" in html and 'name="theme-color"' in html
+    css = guest.get(re.search(r'href="([^"]*bundle-public\.css[^"]*)"', guest.get("/music-share/").get_data(as_text=True)).group(1)).get_data(as_text=True)
+    assert "pointer: coarse" in css and "safe-area-inset-bottom" in css and "font-size: 16px" in css
+    js = guest.get(re.search(r'src="([^"]*bundle-public\.js[^"]*)"', guest.get("/music-share/").get_data(as_text=True)).group(1)).get_data(as_text=True)
+    assert "mediaSession" in js and 'pan-y' in js
+
+
+def test_speed_check_times_a_real_sqlite_save_on_both_disks(owner):
+    d = owner.get("/music-share/api/diagnostics").json
+    for key in ("sqlite_data_volume", "sqlite_boot_disk"):
+        assert d[key] is None or {"save_ms", "checkpoint_ms"} <= set(d[key])
+    assert d["sqlite_data_volume"] is not None

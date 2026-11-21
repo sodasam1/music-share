@@ -4,6 +4,8 @@
   const $ = (s, r) => (r || document).querySelector(s);
   const audio = new Audio();
   audio.preload = "none";
+  audio.setAttribute("playsinline", "");
+  window.lockScreen.bind(audio, null);
   let tab = "tracks", tracks = [], playlists = [], allTracks = [], backup = null, playing = null;
   const waves = new Map();
 
@@ -88,7 +90,7 @@
     }
   }
   function play(t, at) {
-    if (playing !== t.id) { playing = t.id; audio.src = t.audio; if (at) audio.addEventListener("loadedmetadata", () => { audio.currentTime = at; }, { once: true }); }
+    if (playing !== t.id) { playing = t.id; window.lockScreen.set(t.title); audio.src = t.audio; if (at) audio.addEventListener("loadedmetadata", () => { audio.currentTime = at; }, { once: true }); }
     else if (at != null) audio.currentTime = at;
     loading = true; paintPlay();
     audio.play().catch(() => { loading = false; paintPlay(); });
@@ -165,7 +167,7 @@
       xhr.send(fd);
     }
     const drop = h("div", { class: "drop", tabindex: "0", role: "button", onclick: () => input.click(), onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") input.click(); } },
-      "Drop audio files here, or click to choose. New uploads are ", vis);
+      (matchMedia("(pointer: coarse)").matches ? "Tap here to choose audio files. New uploads are " : "Drop audio files here, or click to choose. New uploads are "), vis);
     vis.addEventListener("click", (e) => e.stopPropagation());
     drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
     drop.addEventListener("dragleave", () => drop.classList.remove("over"));
@@ -223,6 +225,9 @@
       const row = (k, v) => out.append(h("div", { class: "track-meta" }, k + ": " + v));
       row("Saving to the data volume", d.commit_data_volume_ms == null ? "could not test" : d.commit_data_volume_ms + " ms");
       row("Saving to the boot disk", d.commit_boot_disk_ms == null ? "could not test" : d.commit_boot_disk_ms + " ms");
+      const q = (o) => (o ? o.save_ms + " ms a save, " + o.checkpoint_ms + " ms to reach the disk (background)" : "could not test");
+      row("A database save on the data volume", q(d.sqlite_data_volume));
+      row("A database save on the boot disk", q(d.sqlite_boot_disk));
       row("Reading the database (cold)", d.database_read_ms + " ms");
       row("Server load (1, 5, 15 min)", d.load ? d.load.join(", ") + " on " + d.cpus + " CPU" : "unknown");
       if (d.swap) row("Swap", d.swap);
@@ -239,7 +244,7 @@
     const main = $("#main"); main.textContent = ""; waves.clear(); main.removeAttribute("aria-busy");
     if (tab === "tracks" || tab === "archive") {
       if (tab === "tracks") main.append(uploadBox());
-      if (!tracks.length) main.append(h("p", { class: "empty" }, tab === "tracks" ? "No tracks yet. Drop a file above." : "Nothing archived."));
+      if (!tracks.length) main.append(h("p", { class: "empty" }, tab === "tracks" ? "No tracks yet. Add a file above." : "Nothing archived."));
       for (const t of tracks) main.append(trackRow(t));
     } else if (tab === "playlists") {
       main.append(act("New playlist", async () => { const title = prompt("Playlist title"); if (!title) return; await send("playlists", "POST", { title }); await reload(); }, "primary"));
