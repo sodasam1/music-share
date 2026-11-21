@@ -637,3 +637,11 @@ def test_nothing_is_drawn_from_a_data_url(owner, guest):
             if ".css" in href or ".js" in href:
                 assert "data:image" not in client.get(href).get_data(as_text=True), href
     assert "<svg" in guest.get("/music-share/").get_data(as_text=True)
+
+
+def test_default_look_matches_riffbox(guest):
+    """Riffbox opens in orange; so does every app on the site (the kit default), and the logo takes the accent colour."""
+    html = guest.get("/music-share/").get_data(as_text=True)
+    css = guest.get(re.search(r'href="([^"]*bundle-public\.css[^"]*)"', html).group(1)).get_data(as_text=True)
+    assert "--acc-l, #c8400b" in css and "--acc-d, #ff7a3d" in css
+    assert 'class="mark-bg"' in html and ".brand .mark-bg { fill: var(--accent)" in css
