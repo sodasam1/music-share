@@ -60,3 +60,7 @@ no likes, follows, comments, counts shown to listeners, discovery or sign-ups. T
 - Studio: upload progress bar; per-track "played N times, last <date>".
 - Speed: each static file is read once, gzipped once and kept in memory; pages ask for `/static/x.css?v=<hash>` which browsers keep for a year (the address changes when the file does). Waveform data on list pages is halved (100 bars).
 - Upgrade: the database is upgraded in place on start (two new columns); restoring an older backup upgrades it too.
+
+## Speed
+
+See `docs/SPEED.md`: running the Speed check in the Studio and moving the database to the boot disk.
